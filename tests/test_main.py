@@ -166,3 +166,149 @@ class TestWebhookRoute:
         body = resp.get_json()
         assert "CC_LIST_RULES" in body
         assert "TEST_MODE" in body
+
+
+# ── TestCCTokenRefresh ─────────────────────────────────────────────────────────
+
+class TestCCTokenRefresh:
+    """Tests for CC access token refresh on 401."""
+
+    def test_refresh_success(self):
+        """_refresh_cc_token() updates cache and Secret Manager on success."""
+        from unittest.mock import MagicMock, patch
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"access_token": "new-token-abc"}
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("pcp_to_cc.main.requests.post", return_value=mock_resp), \
+             patch("pcp_to_cc.main.update_secret") as mock_update:
+            from pcp_to_cc.main import _refresh_cc_token
+            result = _refresh_cc_token()
+
+        print(f"\nresult={result}")
+        assert result is True
+        mock_update.assert_called_once_with("CC_ACCESS_TOKEN", "new-token-abc")
+
+    def test_refresh_bad_response(self):
+        """_refresh_cc_token() returns False when response has no access_token."""
+        from unittest.mock import MagicMock, patch
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}       # missing access_token
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("pcp_to_cc.main.requests.post", return_value=mock_resp), \
+             patch("pcp_to_cc.main.update_secret") as mock_update:
+            from pcp_to_cc.main import _refresh_cc_token
+            result = _refresh_cc_token()
+
+        print(f"\nresult={result}")
+        assert result is False
+        mock_update.assert_not_called()
+
+    def test_add_to_cc_retries_on_401(self, pcp_person_with_opt_in):
+        """add_to_cc() refreshes token and retries once on 401."""
+        from unittest.mock import MagicMock, call, patch
+        from pcp_to_cc.main import add_to_cc, parse_person
+
+        person = parse_person(pcp_person_with_opt_in)
+
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        resp_200.raise_for_status.return_value = None
+
+        with patch("pcp_to_cc.main.requests.post", side_effect=[resp_401, resp_200]) as mock_post, \
+             patch("pcp_to_cc.main._refresh_cc_token", return_value=True) as mock_refresh:
+            result = add_to_cc(person, ["cc-list-uuid-001"])
+
+        print(f"\nresult={result}  post_calls={mock_post.call_count}  refresh_calls={mock_refresh.call_count}")
+        assert result is True
+        assert mock_post.call_count == 2
+        mock_refresh.assert_called_once()
+
+    def test_add_to_cc_body_matches_payload_file(self, pcp_person_with_opt_in, cc_add_contact_payload):
+        """Body sent to CC POST /contacts must match tests/payloads/cc_add_contact.json exactly."""
+        from unittest.mock import MagicMock, patch
+        from pcp_to_cc.main import add_to_cc, parse_person
+
+        person = parse_person(pcp_person_with_opt_in)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 201
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("pcp_to_cc.main.requests.post", return_value=mock_resp) as mock_post:
+            add_to_cc(person, ["cc-list-uuid-001"])
+
+        actual_body = mock_post.call_args.kwargs["json"]
+        print(f"\nactual body:   {actual_body}")
+        print(f"expected body: {cc_add_contact_payload}")
+        assert actual_body == cc_add_contact_payload
+
+    def test_add_to_cc_updates_on_409_conflict(self, pcp_person_with_opt_in):
+        """On 409 conflict, extract contact_id and PUT to update existing contact."""
+        from unittest.mock import MagicMock, patch
+        from pcp_to_cc.main import add_to_cc, parse_person
+
+        person = parse_person(pcp_person_with_opt_in)
+
+        resp_409 = MagicMock()
+        resp_409.status_code = 409
+        resp_409.json.return_value = [{
+            "error_key": "contacts.api.conflict",
+            "error_message": "Email already exists for contact existing-contact-uuid-001"
+        }]
+
+        resp_200 = MagicMock()
+        resp_200.status_code = 200
+        resp_200.raise_for_status.return_value = None
+
+        with patch("pcp_to_cc.main.requests.post", return_value=resp_409), \
+             patch("pcp_to_cc.main.requests.put", return_value=resp_200) as mock_put:
+            result = add_to_cc(person, ["cc-list-uuid-001"])
+
+        print(f"\nresult={result}")
+        print(f"PUT called with URL: {mock_put.call_args}")
+        assert result is True
+        assert "existing-contact-uuid-001" in str(mock_put.call_args)
+
+    def test_add_to_cc_409_no_contact_id_returns_false(self, pcp_person_with_opt_in):
+        """On 409 conflict with unparseable error, return False."""
+        from unittest.mock import MagicMock, patch
+        from pcp_to_cc.main import add_to_cc, parse_person
+
+        person = parse_person(pcp_person_with_opt_in)
+
+        resp_409 = MagicMock()
+        resp_409.status_code = 409
+        resp_409.json.return_value = [{"error_key": "contacts.api.conflict", "error_message": "unknown"}]
+        resp_409.text = "unknown conflict"
+
+        with patch("pcp_to_cc.main.requests.post", return_value=resp_409):
+            result = add_to_cc(person, ["cc-list-uuid-001"])
+
+        print(f"\nresult={result}")
+        assert result is False
+
+    def test_add_to_cc_fails_if_refresh_fails(self, pcp_person_with_opt_in):
+        """add_to_cc() returns False when token refresh itself fails."""
+        from unittest.mock import MagicMock, patch
+        from pcp_to_cc.main import add_to_cc, parse_person
+
+        person = parse_person(pcp_person_with_opt_in)
+
+        resp_401 = MagicMock()
+        resp_401.status_code = 401
+
+        with patch("pcp_to_cc.main.requests.post", return_value=resp_401), \
+             patch("pcp_to_cc.main._refresh_cc_token", return_value=False):
+            result = add_to_cc(person, ["cc-list-uuid-001"])
+
+        print(f"\nresult={result}")
+        assert result is False

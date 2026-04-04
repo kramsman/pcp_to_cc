@@ -1,0 +1,12 @@
+{
+  "email_address": {
+    "address": "jane.smith@example.com",
+    "permission_to_send": "implicit"
+  },
+  "first_name": "Jane",
+  "last_name": "Smith",
+  "create_source": "Account",
+  "list_memberships": [
+    "cc-list-uuid-001"
+  ]
+}

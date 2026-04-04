@@ -134,7 +134,10 @@ CC_LIST_RULES = [
 |---|---|---|
 | PCP Application ID | PCP Developer Settings → Personal Access Tokens | GCP Secret Manager as `PCP_APP_ID` |
 | PCP Secret | Same as above | GCP Secret Manager as `PCP_SECRET` |
-| CC Access Token | developer.constantcontact.com | GCP Secret Manager as `CC_ACCESS_TOKEN` |
+| CC API Key | developer.constantcontact.com → your app | GCP Secret Manager as `CC_API_KEY` |
+| CC API Secret | Same app page | GCP Secret Manager as `CC_API_SECRET` |
+| CC Access Token | Generated during initial OAuth flow | GCP Secret Manager as `CC_ACCESS_TOKEN` (auto-refreshed) |
+| CC Refresh Token | Generated during initial OAuth flow | GCP Secret Manager as `CC_REFRESH_TOKEN` (never changes) |
 | PCP field definition ID | Set LOG_PAYLOADS=true, submit test person, read logs | `.env` as `PCP_NEWSLETTER_FIELD_ID`, then `set-env-vars.sh` |
 | CC list UUID | CC account → Contacts → Lists → click list → UUID in URL | `.env` as `CC_NEWSLETTER_LIST_ID`, then `set-env-vars.sh` |
 
@@ -169,6 +172,8 @@ CC_LIST_RULES = [
 ## Important Notes
 
 - **Duplicate safety:** CC's `/v3/contacts` upsert endpoint never creates duplicates — safe to run repeatedly
+- **CC token refresh:** CC access tokens expire (~24 hrs). The app automatically refreshes on a 401, stores the new token in Secret Manager, and retries. Requires `CC_REFRESH_TOKEN`, `CC_API_KEY`, `CC_API_SECRET` in Secret Manager. Choose **Long Lived Refresh Tokens** in CC OAuth settings so `CC_REFRESH_TOKEN` never needs updating.
 - **PCP webhook payload format:** Assumed based on PCP API docs; update `_extract_person_id()` in `main.py` if the real format differs
 - **Adding more lists:** Edit only `CC_LIST_RULES` in `config.py` — no logic changes needed
 - **Test mode:** `TEST_MODE=true` skips the CC API call entirely and logs what would happen — use this for all initial testing
+- **Test results:** 21/21 passing (2026-04-04)

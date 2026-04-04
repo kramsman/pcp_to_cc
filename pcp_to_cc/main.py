@@ -47,6 +47,18 @@ def get_secret(secret_id: str) -> str:
     return _secrets[secret_id]
 
 
+def update_secret(secret_id: str, value: str) -> None:
+    """
+    Write a new version of a secret to GCP Secret Manager and update the local cache.
+    Used to store refreshed CC access tokens so they survive across Cloud Run instances.
+    """
+    parent  = f"projects/{config.CLOUD_PROJECT_ID}/secrets/{secret_id}"
+    payload = secretmanager.SecretPayload(data=value.encode("UTF-8"))
+    _get_secret_client().add_secret_version(request={"parent": parent, "payload": payload})
+    _secrets[secret_id] = value  # keep cache in sync
+    logger.debug(f"Secret '{secret_id}' updated in Secret Manager")
+
+
 # ─── PCP API ──────────────────────────────────────────────────────────────────
 
 def fetch_person_from_pcp(person_id: str) -> dict | None:
@@ -199,19 +211,61 @@ def apply_rules(person: dict) -> list[str]:
 
 # ─── Constant Contact API ─────────────────────────────────────────────────────
 
-def add_to_cc(person: dict, list_ids: list[str]) -> bool:
-    """
-    Create or update a contact in Constant Contact and add them to list_ids.
+_CC_TOKEN_URL = "https://authz.constantcontact.com/oauth2/default/v1/token"
 
-    Uses the CC v3 /contacts upsert endpoint — safe to call repeatedly,
-    no duplicate contacts are created.
+
+def _refresh_cc_token() -> bool:
+    """
+    Exchange CC_REFRESH_TOKEN for a new CC_ACCESS_TOKEN.
+
+    CC access tokens expire (~24 hrs). This is called automatically by add_to_cc()
+    on a 401 response. The new access token is written back to GCP Secret Manager
+    so it persists across Cloud Run instances.
+
+    Requires secrets: CC_API_KEY, CC_REFRESH_TOKEN (in Secret Manager).
+    CC_API_SECRET is optional — CC does not always issue one.
+    Long Lived Refresh Tokens are used so CC_REFRESH_TOKEN never needs updating.
+
     Returns True on success, False on error.
     """
-    url     = f"{config.CC_API_BASE}/contacts"
-    headers = {
+    try:
+        # CC_API_SECRET is optional — use empty string if not present
+        try:
+            cc_api_secret = get_secret("CC_API_SECRET")
+        except Exception:
+            cc_api_secret = ""
+
+        resp = requests.post(
+            _CC_TOKEN_URL,
+            auth=(get_secret("CC_API_KEY"), cc_api_secret),
+            data={"grant_type": "refresh_token", "refresh_token": get_secret("CC_REFRESH_TOKEN")},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        new_token = resp.json().get("access_token", "")
+        if not new_token:
+            logger.error("CC token refresh: response missing access_token")
+            return False
+        update_secret("CC_ACCESS_TOKEN", new_token)
+        logger.info("CC access token refreshed and stored in Secret Manager")
+        return True
+    except requests.RequestException as e:
+        logger.error(f"CC token refresh failed: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"CC token refresh response: {e.response.text}")
+        return False
+
+
+def _cc_headers() -> dict:
+    return {
         "Authorization": f"Bearer {get_secret('CC_ACCESS_TOKEN')}",
         "Content-Type":  "application/json",
     }
+
+
+def _cc_create(person: dict, list_ids: list[str]) -> requests.Response:
+    """POST /v3/contacts — creates a new contact. Returns the response."""
     body = {
         "email_address": {
             "address":            person["email"],
@@ -219,19 +273,94 @@ def add_to_cc(person: dict, list_ids: list[str]) -> bool:
         },
         "first_name":       person["first_name"],
         "last_name":        person["last_name"],
+        "create_source":    "Account",
         "list_memberships": list_ids,
     }
+    return requests.post(
+        f"{config.CC_API_BASE}/contacts",
+        json=body, headers=_cc_headers(), timeout=10,
+    )
 
+
+def _cc_update(contact_id: str, person: dict, list_ids: list[str]) -> requests.Response:
+    """PUT /v3/contacts/{id} — updates an existing contact. Returns the response."""
+    body = {
+        "email_address": {
+            "address":            person["email"],
+            "permission_to_send": "implicit",
+        },
+        "first_name":       person["first_name"],
+        "last_name":        person["last_name"],
+        "update_source":    "Account",
+        "list_memberships": list_ids,
+    }
+    return requests.put(
+        f"{config.CC_API_BASE}/contacts/{contact_id}",
+        json=body, headers=_cc_headers(), timeout=10,
+    )
+
+
+def _extract_contact_id_from_conflict(resp: requests.Response) -> str:
+    """
+    CC returns 409 when a contact already exists, with the existing contact_id
+    embedded in the error_message string. Extract and return it, or "" if not found.
+
+    Example error_message:
+        "Email already exists for contact 5cf018e4-302e-11f1-84b4-0242841d1f0f"
+    """
     try:
-        resp = requests.post(url, json=body, headers=headers, timeout=10)
-        resp.raise_for_status()
-        logger.info(f"CC contact added/updated: email={person['email']}  lists={list_ids}")
-        return True
-    except requests.RequestException as e:
-        logger.error(f"CC API call failed for email={person['email']}: {e}")
-        if hasattr(e, "response") and e.response is not None:
-            logger.error(f"CC API error body: {e.response.text}")
-        return False
+        errors = resp.json()
+        for error in errors:
+            msg = error.get("error_message", "")
+            if "already exists for contact" in msg:
+                return msg.split("already exists for contact")[-1].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def add_to_cc(person: dict, list_ids: list[str]) -> bool:
+    """
+    Create or update a contact in Constant Contact and add them to list_ids.
+
+    Flow:
+      1. POST /v3/contacts to create the contact.
+      2. If 409 (already exists), extract contact_id from error and PUT to update.
+      3. On 401 (expired token), refresh once and retry from step 1.
+
+    Returns True on success, False on error.
+    """
+    for attempt in range(2):
+        try:
+            resp = _cc_create(person, list_ids)
+
+            # ── Token expired — refresh and retry ─────────────────────────────
+            if resp.status_code == 401 and attempt == 0:
+                logger.warning("CC API returned 401 — access token expired, refreshing")
+                if not _refresh_cc_token():
+                    return False
+                continue
+
+            # ── Contact already exists — update instead ───────────────────────
+            if resp.status_code == 409:
+                contact_id = _extract_contact_id_from_conflict(resp)
+                if not contact_id:
+                    logger.error(f"CC 409 conflict but could not extract contact_id: {resp.text}")
+                    return False
+                logger.info(f"CC contact exists ({contact_id}) — updating")
+                resp = _cc_update(contact_id, person, list_ids)
+
+            resp.raise_for_status()
+            logger.info(f"CC contact added/updated: email={person['email']}  lists={list_ids}")
+            return True
+
+        except requests.RequestException as e:
+            logger.error(f"CC API call failed for email={person['email']}: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"CC API error body: {e.response.text}")
+            return False
+
+    return False
 
 
 # ─── Flask routes ─────────────────────────────────────────────────────────────

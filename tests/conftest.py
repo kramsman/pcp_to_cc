@@ -43,9 +43,12 @@ def set_env_vars(monkeypatch):
 def mock_secret_manager():
     """Prevent any real GCP Secret Manager calls during tests."""
     fake_secrets = {
-        "PCP_APP_ID":       "fake-pcp-app-id",
-        "PCP_SECRET":       "fake-pcp-secret",
-        "CC_ACCESS_TOKEN":  "fake-cc-token",
+        "PCP_APP_ID":        "fake-pcp-app-id",
+        "PCP_SECRET":        "fake-pcp-secret",
+        "CC_ACCESS_TOKEN":   "fake-cc-access-token",
+        "CC_REFRESH_TOKEN":  "fake-cc-refresh-token",
+        "CC_API_KEY":        "fake-cc-api-key",
+        "CC_API_SECRET":     "fake-cc-api-secret",
     }
 
     mock_client = MagicMock()
@@ -155,6 +158,14 @@ def pcp_person_no_email():
             },
         ],
     }
+
+
+# ── CC payload fixture ─────────────────────────────────────────────────────────
+
+@pytest.fixture
+def cc_add_contact_payload():
+    """Expected JSON body sent to CC POST /v3/contacts to add a contact to a list."""
+    return load_payload("cc_add_contact.json")
 
 
 # ── Webhook payload fixtures ───────────────────────────────────────────────────
