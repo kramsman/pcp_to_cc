@@ -1,0 +1,102 @@
+"""
+Local test script for pcp-to-cc webhook.
+
+Usage:
+    1. Start the server:       python pcp_to_cc/main.py
+    2. In another terminal:    python test_local.py
+
+Edit the payloads below to test different scenarios.
+Set LOG_PAYLOADS=true and TEST_MODE=true in .env to see full output without touching CC.
+"""
+
+import json
+
+import requests
+
+SERVER_URL = "http://localhost:8080"
+
+# ── Sample PCP person.created webhook payload ──────────────────────────────────
+# This is the webhook PCP sends to our endpoint when a new person is created.
+# The person_id here (12345678) is a placeholder — for a real test, use a real PCP person ID.
+#
+# NOTE: The actual payload format from PCP may differ slightly.
+# Set LOG_PAYLOADS=true and trigger a real PCP webhook to capture the real format.
+
+WEBHOOK_PAYLOAD = {
+    "name": "person.created",
+    "payload": {
+        "data": {
+            "type": "Person",
+            "id": "12345678",   # replace with a real PCP person ID for live testing
+            "attributes": {
+                "first_name": "Test",
+                "last_name": "Person",
+                "created_at": "2026-04-03T12:00:00Z",
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/people/12345678"
+            },
+        }
+    },
+}
+
+IGNORED_EVENT_PAYLOAD = {
+    "name": "person.updated",
+    "payload": {"data": {"type": "Person", "id": "12345678"}},
+}
+
+
+def post(path: str, payload: dict, label: str):
+    print(f"\n{'='*60}")
+    print(f"{label}")
+    print(f"POST {SERVER_URL}{path}")
+    print(f"Payload: {json.dumps(payload, indent=2)}")
+    print("="*60)
+    try:
+        resp = requests.post(
+            f"{SERVER_URL}{path}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        print(f"Status:   {resp.status_code}")
+        print(f"Response: {json.dumps(resp.json(), indent=2)}")
+    except requests.exceptions.ConnectionError:
+        print("ERROR: Could not connect. Is the server running?")
+        print("  Run:  python pcp_to_cc/main.py")
+
+
+def test_health():
+    print(f"\n{'='*60}")
+    print(f"GET {SERVER_URL}/health")
+    print("="*60)
+    try:
+        resp = requests.get(f"{SERVER_URL}/health", timeout=5)
+        print(f"Status:   {resp.status_code}")
+        print(f"Response: {json.dumps(resp.json(), indent=2)}")
+    except requests.exceptions.ConnectionError:
+        print("ERROR: Could not connect. Is the server running?")
+
+
+def test_settings():
+    print(f"\n{'='*60}")
+    print(f"GET {SERVER_URL}/settings")
+    print("="*60)
+    try:
+        resp = requests.get(f"{SERVER_URL}/settings", timeout=5)
+        print(f"Status:   {resp.status_code}")
+        print(f"Response: {json.dumps(resp.json(), indent=2)}")
+    except requests.exceptions.ConnectionError:
+        print("ERROR: Could not connect.")
+
+
+def test_bad_payload():
+    post("/webhook", {"bad": "not a webhook"}, "Test: bad payload (should return 400)")
+    post("/webhook", IGNORED_EVENT_PAYLOAD, "Test: ignored event (should return 200 ignored)")
+
+
+if __name__ == "__main__":
+    test_health()
+    test_settings()
+    post("/webhook", WEBHOOK_PAYLOAD, "Test: person.created webhook")
+    test_bad_payload()

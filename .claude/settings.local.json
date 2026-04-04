@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(chmod +x:*)",
+      "Bash(uv sync:*)",
+      "Bash(PYTHONPATH=pcp_to_cc uv run pytest tests/ -s -v)"
+    ]
+  }
+}

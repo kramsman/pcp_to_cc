@@ -1,0 +1,25 @@
+[project]
+name = "pcp-to-cc"
+version = "0.1.0"
+description = "Planning Center People webhook receiver — syncs new profiles to Constant Contact"
+requires-python = ">=3.12"
+
+dependencies = [
+    "flask>=3.0",
+    "gunicorn>=21.0",
+    "requests>=2.31",
+    "google-cloud-secret-manager>=2.20",
+    "loguru>=0.7",
+    "python-dotenv>=1.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0",
+    "pytest-dotenv>=0.5",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (may call external services)",
+]
