@@ -76,7 +76,10 @@ def fetch_person_from_pcp(person_id: str) -> dict | None:
     auth   = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
 
     try:
-        resp = requests.get(url, params=params, auth=auth, timeout=10)
+        resp = requests.get(
+            url, params=params, auth=auth, timeout=10,
+            headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"},
+        )
         resp.raise_for_status()
         data = resp.json()
         if config.LOG_PAYLOADS:
@@ -365,8 +368,13 @@ def add_to_cc(person: dict, list_ids: list[str]) -> bool:
 
 # ─── Flask routes ─────────────────────────────────────────────────────────────
 
-@app.route("/webhook", methods=["POST"])
+@app.route("/webhook", methods=["GET", "POST"])
 def webhook():
+    # PCP sends a GET to verify the endpoint is reachable when you first subscribe
+    if request.method == "GET":
+        logger.info("Webhook GET verification request received")
+        return jsonify({"status": "ok"}), 200
+
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
@@ -378,6 +386,10 @@ def webhook():
         return jsonify({"error": "payload must be a JSON object"}), 400
 
     event_name = payload.get("name", "")
+    if not event_name:
+        logger.warning("Rejected: payload missing 'name' field")
+        return jsonify({"error": "payload missing 'name' field"}), 400
+
     if event_name != "person.created":
         logger.info(f"Ignored event: {event_name!r}")
         return jsonify({"status": "ignored", "event": event_name}), 200

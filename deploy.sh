@@ -13,8 +13,9 @@ gcloud run deploy pcp-to-cc \
   --platform managed \
   --allow-unauthenticated \
   --clear-base-image \
-  --service-account "pcp-to-cc-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
-  --project YOUR_PROJECT_ID
+  --service-account "pcp-to-cc-sa@pcp-to-cc.iam.gserviceaccount.com" \
+  --project pcp-to-cc
+
 
 echo ""
 echo "Deploy complete. Updating environment variables..."

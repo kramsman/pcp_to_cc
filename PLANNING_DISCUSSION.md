@@ -138,7 +138,7 @@ CC_LIST_RULES = [
 | CC API Secret | Same app page | GCP Secret Manager as `CC_API_SECRET` |
 | CC Access Token | Generated during initial OAuth flow | GCP Secret Manager as `CC_ACCESS_TOKEN` (auto-refreshed) |
 | CC Refresh Token | Generated during initial OAuth flow | GCP Secret Manager as `CC_REFRESH_TOKEN` (never changes) |
-| PCP field definition ID | Set LOG_PAYLOADS=true, submit test person, read logs | `.env` as `PCP_NEWSLETTER_FIELD_ID`, then `set-env-vars.sh` |
+| PCP field definition ID | Set LOG_PAYLOADS=true, submit test person, read logs | `.env` as `PCP_NEWSLETTER_TRIGGER_FIELD_ID`, then `set-env-vars.sh` |
 | CC list UUID | CC account → Contacts → Lists → click list → UUID in URL | `.env` as `CC_NEWSLETTER_LIST_ID`, then `set-env-vars.sh` |
 
 ---
@@ -160,7 +160,7 @@ CC_LIST_RULES = [
 - [ ] With `LOG_PAYLOADS=true`: submit real test person in PCP, read logs to find field definition ID
 
 ### Deploy
-- [ ] Fill in `PCP_NEWSLETTER_FIELD_ID` and `CC_NEWSLETTER_LIST_ID` in `set-env-vars.sh`
+- [ ] Fill in `PCP_NEWSLETTER_TRIGGER_FIELD_ID` and `CC_NEWSLETTER_LIST_ID` in `set-env-vars.sh`
 - [ ] Confirm `TEST_MODE=true` in `set-env-vars.sh` for first deploy
 - [ ] Run `./deploy.sh`
 - [ ] Register Cloud Run URL in PCP as webhook endpoint for `person.created`

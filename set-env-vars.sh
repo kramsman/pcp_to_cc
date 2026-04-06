@@ -19,16 +19,15 @@ ENV_VARS=(
   "LOG_PAYLOADS=true"
 
   # ── PCP field definition IDs ───────────────────────────────────────────────
-  # Find by setting LOG_PAYLOADS=true and submitting a test person.
-  # Look in logs for type=FieldDatum → relationships.field_definition.data.id
-  "PCP_NEWSLETTER_FIELD_ID=your-pcp-field-definition-id"
+  # Find by running: python find_pcp_custom_field_ids.py  (requires PCP credentials in Secret Manager)
+  "PCP_NEWSLETTER_TRIGGER_FIELD_ID=1039700"
 
   # ── Constant Contact list IDs ──────────────────────────────────────────────
   # Find in CC: Contacts → Lists → click a list → UUID is in the URL.
-  "CC_NEWSLETTER_LIST_ID=your-cc-list-uuid"
+  "CC_NEWSLETTER_LIST_ID=dd8406e2-129f-11ed-a1a4-fa163eaee913"
 
   # ── GCP ────────────────────────────────────────────────────────────────────
-  "CLOUD_PROJECT_ID=YOUR_PROJECT_ID"
+  "CLOUD_PROJECT_ID=pcp-to-cc"
 
 )
 
@@ -37,4 +36,4 @@ IFS='|'
 gcloud run services update pcp-to-cc \
   --region us-east1 \
   --update-env-vars "^|^${ENV_VARS[*]}" \
-  --project YOUR_PROJECT_ID
+  --project pcp-to-cc

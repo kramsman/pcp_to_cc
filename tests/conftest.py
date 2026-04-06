@@ -28,12 +28,12 @@ def load_payload(filename: str) -> dict:
 def set_env_vars(monkeypatch):
     """
     Set required env vars before each test so config.py imports without error.
-    PCP_NEWSLETTER_FIELD_ID=999 matches the field_definition id in the mock PCP API response.
+    PCP_NEWSLETTER_TRIGGER_FIELD_ID=999 matches the field_definition id in the mock PCP API response.
     """
-    monkeypatch.setenv("CLOUD_PROJECT_ID",       "test-project")
-    monkeypatch.setenv("TEST_MODE",              "true")
-    monkeypatch.setenv("LOG_PAYLOADS",           "false")
-    monkeypatch.setenv("PCP_NEWSLETTER_FIELD_ID", "999")
+    monkeypatch.setenv("CLOUD_PROJECT_ID",                "test-project")
+    monkeypatch.setenv("TEST_MODE",                       "true")
+    monkeypatch.setenv("LOG_PAYLOADS",                    "false")
+    monkeypatch.setenv("PCP_NEWSLETTER_TRIGGER_FIELD_ID", "999")
     monkeypatch.setenv("CC_NEWSLETTER_LIST_ID",   "cc-list-uuid-001")
 
 

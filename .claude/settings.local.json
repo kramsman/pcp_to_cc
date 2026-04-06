@@ -5,7 +5,9 @@
       "Bash(chmod +x:*)",
       "Bash(uv sync:*)",
       "Bash(PYTHONPATH=pcp_to_cc uv run pytest tests/ -s -v)",
-      "WebFetch(domain:v3.developer.constantcontact.com)"
+      "WebFetch(domain:v3.developer.constantcontact.com)",
+      "Bash(ls /Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/*.py)",
+      "WebFetch(domain:api.planningcenteronline.com)"
     ]
   }
 }
