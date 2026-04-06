@@ -65,7 +65,7 @@ CC_LIST_RULES = [
     {
         "description": "Newsletter opt-in → newsletter list",
         "pcp_field":   "newsletter_opt_in",
-        "pcp_value":   "Yes",
+        "pcp_value":   "true",
         "cc_lists":    [os.environ.get("CC_NEWSLETTER_LIST_ID", "")],
     },
     # Example of a second rule — uncomment and fill in to activate:

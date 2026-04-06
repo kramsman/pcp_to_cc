@@ -23,26 +23,33 @@ SERVER_URL = "http://localhost:8080"
 # Set LOG_PAYLOADS=true and trigger a real PCP webhook to capture the real format.
 
 WEBHOOK_PAYLOAD = {
-    "name": "person.created",
-    "payload": {
-        "data": {
-            "type": "Person",
-            "id": "12345678",   # replace with a real PCP person ID for live testing
+    "data": [
+        {
+            "id": "fc40af07-f707-46cb-bc97-08f080e74ac7",
+            "type": "EventDelivery",
             "attributes": {
-                "first_name": "Test",
-                "last_name": "Person",
-                "created_at": "2026-04-03T12:00:00Z",
+                "name": "people.v2.events.person.created",
+                "attempt": 1,
+                "payload": '{"data":{"type":"Person","id":"12345678","attributes":{"first_name":"Test","last_name":"Person","created_at":"2026-04-03T12:00:00Z"}}}',
+                # ^^^ replace 12345678 with a real PCP person ID for live testing
             },
-            "links": {
-                "self": "https://api.planningcenteronline.com/people/v2/people/12345678"
+            "relationships": {
+                "organization": {"data": {"type": "Organization", "id": "526881"}}
             },
         }
-    },
+    ]
 }
 
 IGNORED_EVENT_PAYLOAD = {
-    "name": "person.updated",
-    "payload": {"data": {"type": "Person", "id": "12345678"}},
+    "data": [
+        {
+            "type": "EventDelivery",
+            "attributes": {
+                "name": "people.v2.events.person.updated",
+                "payload": '{"data":{"type":"Person","id":"12345678"}}',
+            },
+        }
+    ]
 }
 
 

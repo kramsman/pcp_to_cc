@@ -12,7 +12,7 @@ ENV_VARS=(
   # ── Feature flags ──────────────────────────────────────────────────────────
   # TEST_MODE=true skips the CC API call and logs what would happen instead.
   # Set to false only when ready to go live.
-  "TEST_MODE=true"
+  "TEST_MODE=false"
 
   # LOG_PAYLOADS=true logs raw webhook payloads and PCP API responses.
   # Useful for discovering PCP field definition IDs. Contains PII — disable when stable.

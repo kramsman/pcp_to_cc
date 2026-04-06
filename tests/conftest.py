@@ -96,7 +96,7 @@ def pcp_person_with_opt_in():
             {
                 "type": "FieldDatum",
                 "id": "222",
-                "attributes": {"value": "Yes"},
+                "attributes": {"value": "true"},
                 "relationships": {
                     "field_definition": {
                         "data": {"type": "FieldDefinition", "id": "999"}
@@ -149,7 +149,7 @@ def pcp_person_no_email():
             {
                 "type": "FieldDatum",
                 "id": "555",
-                "attributes": {"value": "Yes"},
+                "attributes": {"value": "true"},
                 "relationships": {
                     "field_definition": {
                         "data": {"type": "FieldDefinition", "id": "999"}

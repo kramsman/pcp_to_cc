@@ -84,7 +84,7 @@ def fetch_person_from_pcp(person_id: str) -> dict | None:
         resp.raise_for_status()
         data = resp.json()
         if config.LOG_PAYLOADS:
-            logger.debug(f"PCP API response for person_id={person_id}: {data}")
+            logger.info(f"PCP API response for person_id={person_id}: {data}")
         return data
     except requests.RequestException as e:
         logger.error(f"PCP API fetch failed for person_id={person_id}: {e}")
@@ -210,7 +210,7 @@ def apply_rules(person: dict) -> list[str]:
             matched.update(valid_list_ids)
             logger.info(f"Rule matched: '{rule['description']}' → {valid_list_ids}")
         else:
-            logger.debug(f"Rule not matched: '{rule['description']}' (field_id={field_id}, got '{actual_value}', want '{rule['pcp_value']}')")
+            logger.info(f"Rule not matched: '{rule['description']}' (field_id={field_id}, got '{actual_value}', want '{rule['pcp_value']}')")
 
     return list(matched)
 

@@ -26,7 +26,7 @@ class TestParsePerson:
         assert person["first_name"] == "Jane"
         assert person["last_name"]  == "Smith"
         assert person["email"]      == "jane.smith@example.com"
-        assert person["custom_fields"]["999"] == "Yes"
+        assert person["custom_fields"]["999"] == "true"
 
     def test_no_email(self, pcp_person_no_email):
         from pcp_to_cc.main import parse_person
