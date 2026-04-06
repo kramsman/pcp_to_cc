@@ -24,7 +24,8 @@ ENV_VARS=(
 
   # ── Constant Contact list IDs ──────────────────────────────────────────────
   # Find in CC: Contacts → Lists → click a list → UUID is in the URL.
-  "CC_NEWSLETTER_LIST_ID=dd8406e2-129f-11ed-a1a4-fa163eaee913"
+  #  "CC_NEWSLETTER_LIST_ID=dd8406e2-129f-11ed-a1a4-fa163eaee913"  Racial Justice
+  "CC_NEWSLETTER_LIST_ID=a8a7f3ea-1298-11ed-a555-fa163ec0164a"  # Newsletter
 
   # ── GCP ────────────────────────────────────────────────────────────────────
   "CLOUD_PROJECT_ID=pcp-to-cc"
