@@ -11,6 +11,7 @@ Usage (local dev):
     python test_local.py              # send a test webhook in another terminal
 """
 
+import json
 import os
 
 import requests
@@ -96,27 +97,29 @@ def _extract_person_id(webhook_payload: dict) -> str:
     """
     Extract the person ID from a PCP webhook payload.
 
-    Expected PCP webhook format:
+    Actual PCP webhook format:
         {
-          "name": "person.created",
-          "payload": {
-            "data": {
-              "type": "Person",
-              "id": "12345678",
-              ...
+          "data": [{
+            "type": "EventDelivery",
+            "attributes": {
+              "name": "people.v2.events.person.created",
+              "payload": "{\"data\":{\"type\":\"Person\",\"id\":\"12345678\",...}}"
             }
-          }
+          }]
         }
 
-    NOTE: If PCP sends a different structure, update this function.
-    Set LOG_PAYLOADS=true to log the raw webhook and inspect it.
+    The inner payload is a JSON string that must be parsed separately.
     """
-    return (
-        webhook_payload
-        .get("payload", {})
-        .get("data", {})
-        .get("id", "")
-    )
+    try:
+        inner_str = (
+            webhook_payload
+            .get("data", [{}])[0]
+            .get("attributes", {})
+            .get("payload", "{}")
+        )
+        return json.loads(inner_str).get("data", {}).get("id", "")
+    except (json.JSONDecodeError, IndexError):
+        return ""
 
 
 def parse_person(pcp_api_response: dict) -> dict:
@@ -378,19 +381,22 @@ def webhook():
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
-        logger.debug(f"Incoming webhook payload: {payload}")
+        logger.info(f"Incoming webhook payload: {payload}")
 
     # ── Validate ─────────────────────────────────────────────────────────────
     if not isinstance(payload, dict):
         logger.warning("Rejected: payload is not a JSON object")
         return jsonify({"error": "payload must be a JSON object"}), 400
 
-    event_name = payload.get("name", "")
+    try:
+        event_name = payload["data"][0]["attributes"]["name"]
+    except (KeyError, IndexError, TypeError):
+        event_name = ""
     if not event_name:
-        logger.warning("Rejected: payload missing 'name' field")
-        return jsonify({"error": "payload missing 'name' field"}), 400
+        logger.warning("Rejected: payload missing event name")
+        return jsonify({"error": "payload missing event name"}), 400
 
-    if event_name != "person.created":
+    if event_name != "people.v2.events.person.created":
         logger.info(f"Ignored event: {event_name!r}")
         return jsonify({"status": "ignored", "event": event_name}), 200
 

@@ -7,6 +7,10 @@
 #   gcloud auth login
 #   gcloud config set project YOUR_PROJECT_ID
 
+# Refresh credentials via browser if needed (avoids terminal password prompt)
+gcloud auth print-access-token --account=office2@4thu.org > /dev/null 2>&1 || \
+  gcloud auth login --account=office2@4thu.org
+
 gcloud run deploy pcp-to-cc \
   --source . \
   --region us-east1 \
