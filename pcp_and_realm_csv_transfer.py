@@ -27,7 +27,7 @@ if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
 
 from uvbekutils.bek_funcs import exit_yes, exit_yes_no
-from uvbekutils.pyautobek import confirm
+from uvbekutils.pyautobek import alert_with_file_link, confirm
 from uvbekutils.select_file import select_file
 from uvbekutils.standardize_columns import ColSpec, standardize_columns
 
@@ -126,6 +126,60 @@ def browse(df: pd.DataFrame) -> None:
         time.sleep(1)
 
 
+def write_coverage_log(
+    log_path: Path,
+    origin_df: pd.DataFrame,
+    renames: dict[str, str],
+) -> None:
+    """Write a field-coverage report to log_path.
+
+    Reports two categories:
+    - Fields in the origin that are NOT being kept but contain at least one
+      non-empty value (data being silently discarded).
+    - Fields that ARE being kept but are entirely empty in the origin
+      (will produce blank columns in the output).
+    """
+    kept_cols = set(renames.keys())
+    all_cols = set(origin_df.columns)
+
+    def has_data(col: str) -> bool:
+        return origin_df[col].replace("", pd.NA).notna().any()
+
+    # Sort by ascending distinct-value count, then descending non-empty row count
+    # within ties — low-cardinality/most-populated fields first, high-cardinality last.
+    def not_kept_sort_key(c: str) -> tuple:
+        s = origin_df[c].replace("", pd.NA).dropna()
+        return (s.nunique(), -len(s))
+
+    not_kept_with_data = sorted(
+        (c for c in all_cols - kept_cols if has_data(c)),
+        key=not_kept_sort_key,
+    )
+    kept_without_data = sorted(c for c in kept_cols & all_cols if not has_data(c))
+
+    with open(log_path, "w") as f:
+        f.write("Transfer coverage log\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+        f.write(f"Fields KEPT but entirely empty ({len(kept_without_data)}):\n")
+        for c in kept_without_data:
+            f.write(f"  {c}\n")
+        if not kept_without_data:
+            f.write("  (none)\n")
+
+        f.write(f"\n\n\nFields NOT kept but contain data ({len(not_kept_with_data)}):\n")
+        if not not_kept_with_data:
+            f.write("  (none)\n")
+        for col in not_kept_with_data:
+            counts = origin_df[col].replace("", pd.NA).dropna().value_counts()
+            f.write(f"\n  {col} ({counts.sum()} values, {len(counts)} distinct):\n")
+            for val, n in counts.items():
+                f.write(f"    {val!r:<40}  {n}\n")
+
+    print(f"Coverage log written to:\n  {log_path}")
+    alert_with_file_link("Coverage log written.", log_path, title="Transfer Coverage Log")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -178,15 +232,18 @@ def main() -> None:
     renames = build_renames(map_df, keep_col, origin_col, dest_col)
     show_mapping_popup(renames)
 
-    # Build, browse, confirm, write
+    # Build, browse, review log, confirm, write
     output_df = build_output_df(origin_df, renames)
 
     browse(output_df)
 
-    exit_yes_no("Ready to write the output file. Continue?")
-
     datestamp = datetime.now().strftime("%Y%m%d")
     output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
+    log_path = output_path.with_suffix(".log")
+    write_coverage_log(log_path, origin_df, renames)
+
+    exit_yes_no("Ready to write the output file. Continue?")
+
     output_df.fillna("").to_csv(output_path, index=False)
     print(f"\nOutput written to:\n  {output_path}")
 
