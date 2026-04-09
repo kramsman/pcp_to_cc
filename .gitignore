@@ -164,3 +164,6 @@ cython_debug/
 /.idea/.gitignore
 /.idea/misc.xml
 /.idea/vcs.xml
+/pcp_realm_inport_export/fourth-universalist-society-export-1781799.csv
+/pcp_realm_inport_export/xfer_realm_20260408.csv
+/img.png

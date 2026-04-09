@@ -7,7 +7,10 @@
       "Bash(PYTHONPATH=pcp_to_cc uv run pytest tests/ -s -v)",
       "WebFetch(domain:v3.developer.constantcontact.com)",
       "Bash(ls /Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/*.py)",
-      "WebFetch(domain:api.planningcenteronline.com)"
+      "WebFetch(domain:api.planningcenteronline.com)",
+      "Bash(python3:*)",
+      "Bash(/Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/.venv/bin/python3:*)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.12/bin/python3:*)"
     ]
   }
 }
