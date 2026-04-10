@@ -12,6 +12,10 @@ import sys
 import unicodedata
 from datetime import datetime
 
+import requests
+from dotenv import load_dotenv
+from google.cloud import secretmanager
+
 sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
 if True:
     import gitupdater
@@ -35,15 +39,17 @@ from uvbekutils.standardize_columns import ColSpec, standardize_columns
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAP_START_DIR = str(Path(__file__).parent)
 
+PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
+
 PCP_REQUIRED_COLS = ["First Name", "Last Name", "Home Email", "Work Email"]
-REALM_REQUIRED_COLS = ["First Name", "Last Name", "Primary Email", "Alternate Email"]
+REALM_REQUIRED_COLS = ["First Name", "Last Name", "Primary Email", ]
 MAP_REQUIRED_COLS = [
     "pcp_column_name", "pcp_keep", "pcp_skip_tab",
     "realm_column_name", "realm_keep", "realm_skip_tab",
 ]
 
 PCP_FILE_PATTERN = "fourth-universalist-society-export*.csv"
-REALM_FILE_PATTERN = "*realm*.csv"
+REALM_FILE_PATTERN = "*.csv"
 MAP_FILE_PATTERN = "*map*.xlsx"
 
 
@@ -235,6 +241,166 @@ def write_coverage_log(
         sys.exit(0)
 
 
+# ── PCP validation ────────────────────────────────────────────────────────────
+
+def _fetch_pcp_schema() -> dict[str, dict]:
+    """Return combined PCP field schema: standard built-in fields + live custom field definitions.
+
+    Returns {clean_col(name): {"type": str, "options": list[str] | None}}.
+    Standard fields have type="standard". Custom fields have their data_type value
+    (text, paragraph, date, boolean, number, dropdown, checkboxes).
+    Options are populated only for dropdown and checkboxes fields.
+    """
+    load_dotenv()
+    project_id = os.environ.get("CLOUD_PROJECT_ID", "")
+    if not project_id:
+        raise RuntimeError("CLOUD_PROJECT_ID not set in .env")
+
+    sm_client = secretmanager.SecretManagerServiceClient()
+
+    def _secret(name: str) -> str:
+        path = f"projects/{project_id}/secrets/{name}/versions/latest"
+        return sm_client.access_secret_version(request={"name": path}).payload.data.decode("UTF-8")
+
+    auth = (_secret("PCP_APP_ID"), _secret("PCP_SECRET"))
+    hdrs = {"User-Agent": "pcp_to_cc (office2@4thu.org)"}
+
+    schema: dict[str, dict] = {}
+
+    # Fetch custom field definitions (paginated)
+    custom_fields: list = []
+    url: str | None = f"{PCP_API_BASE}/field_definitions"
+    while url:
+        resp = requests.get(url, auth=auth, headers=hdrs, timeout=10)
+        resp.raise_for_status()
+        body = resp.json()
+        custom_fields.extend(body.get("data", []))
+        url = body.get("links", {}).get("next")
+
+    # Fetch options for dropdown/checkbox fields
+    for field in custom_fields:
+        fid = field["id"]
+        attrs = field["attributes"]
+        dtype = attrs.get("data_type", "text")
+        entry: dict = {"type": dtype, "options": None}
+
+        if dtype in ("select", "checkboxes"):
+            options: list[str] = []
+            opts_url: str | None = f"{PCP_API_BASE}/field_definitions/{fid}/field_options"
+            while opts_url:
+                resp = requests.get(opts_url, auth=auth, headers=hdrs, timeout=10)
+                resp.raise_for_status()
+                odata = resp.json()
+                options.extend(opt["attributes"]["value"] for opt in odata.get("data", []))
+                opts_url = odata.get("links", {}).get("next")
+            entry["options"] = options
+
+        schema[clean_col(attrs["name"])] = entry
+
+    return schema
+
+
+def validate_pcp_data(
+    origin_df: pd.DataFrame,
+    renames: dict[str, str],
+    log_path: Path,
+) -> None:
+    """Validate origin data against the live PCP field schema.
+
+    renames maps origin_col_name → pcp_col_name (output of build_renames()).
+    Checks every mapped PCP column: unknown fields are flagged, and dropdown/
+    checkbox fields have their values checked against valid options.
+    Writes a validation log and shows a popup. Exits if user chooses not to continue.
+    """
+    print("Fetching PCP field schema …")
+    try:
+        schema = _fetch_pcp_schema()
+    except Exception as exc:
+        exit_yes(f"Could not fetch PCP field schema:\n{exc}")
+        return  # unreachable
+
+    clean_fields: list[tuple[str, str]] = []   # (pcp_col, type)
+    invalid_fields: list[dict] = []             # fields with bad option values
+    unknown_fields: list[str] = []              # pcp_col not found in schema at all
+
+    for origin_col, pcp_col in renames.items():
+        norm = clean_col(pcp_col)
+        if norm not in schema:
+            unknown_fields.append(pcp_col)
+            continue
+
+        dtype = schema[norm]["type"]
+
+        if dtype not in ("select", "checkboxes"):
+            clean_fields.append((pcp_col, dtype))
+            continue
+
+        valid_opts = set(schema[norm]["options"] or [])
+        invalid_vals: dict[str, int] = {}
+        affected_rows = 0
+
+        series = origin_df[origin_col].replace("", pd.NA).dropna().astype(str)
+        for val in series:
+            if dtype == "checkboxes":
+                bad = [p.strip() for p in val.split("|") if p.strip() and p.strip() not in valid_opts]
+            else:
+                bad = [val] if val not in valid_opts else []
+            if bad:
+                affected_rows += 1
+                for b in bad:
+                    invalid_vals[b] = invalid_vals.get(b, 0) + 1
+
+        if invalid_vals:
+            invalid_fields.append({
+                "pcp_col": pcp_col,
+                "type": dtype,
+                "valid_options": sorted(valid_opts),
+                "invalid_values": invalid_vals,
+                "affected_rows": affected_rows,
+            })
+        else:
+            clean_fields.append((pcp_col, dtype))
+
+    with open(log_path, "w") as f:
+        f.write("PCP Data Validation Report\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+        f.write(f"Fields CLEAN — will import correctly ({len(clean_fields)}):\n")
+        for pcp_col, dtype in clean_fields:
+            f.write(f"  {pcp_col}  [{dtype}]\n")
+        if not clean_fields:
+            f.write("  (none)\n")
+
+        f.write(f"\n\nFields with INVALID VALUES — values will be skipped on import ({len(invalid_fields)}):\n")
+        for entry in invalid_fields:
+            f.write(f"\n  {entry['pcp_col']}  [{entry['type']}]  ({entry['affected_rows']} row(s) affected)\n")
+            f.write(f"    Valid options: {', '.join(entry['valid_options'])}\n")
+            f.write(f"    Invalid values seen:\n")
+            for val, count in sorted(entry["invalid_values"].items(), key=lambda x: -x[1]):
+                f.write(f"      {val!r:<40}  {count}\n")
+        if not invalid_fields:
+            f.write("  (none)\n")
+
+        f.write(f"\n\nColumns not in PCP custom field definitions — standard PCP fields or unknown; values not validated ({len(unknown_fields)}):\n")
+        for col in unknown_fields:
+            f.write(f"  {col}\n")
+        if not unknown_fields:
+            f.write("  (none)\n")
+
+        f.flush()
+        os.fsync(f.fileno())
+
+    print(f"PCP validation log written to:\n  {log_path}")
+    choice = confirm_with_file_link(
+        "PCP validation complete. Review results, then continue or exit.",
+        log_path,
+        title="PCP Data Validation",
+        buttons=["Continue", "Exit"],
+    )
+    if choice == "exit":
+        sys.exit(0)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -289,11 +455,16 @@ def main() -> None:
     renames = build_renames(map_df, keep_col, origin_col, dest_col)
     show_mapping_popup(renames)
 
+    datestamp = datetime.now().strftime("%Y%m%d")
+    output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
+
+    if direction == "realm_to_pcp":
+        pcp_val_log = output_path.with_name(output_path.stem + "_pcp_validation.log")
+        validate_pcp_data(origin_df, renames, pcp_val_log)
+
     # Build, review log, browse, confirm, write
     output_df = build_output_df(origin_df, renames)
 
-    datestamp = datetime.now().strftime("%Y%m%d")
-    output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
     log_path = output_path.with_suffix(".log")
     write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col)
 
