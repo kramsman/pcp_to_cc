@@ -9,6 +9,7 @@ a reformatted CSV ready for import into the destination system.
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime
 
 sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
@@ -27,7 +28,7 @@ if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
 
 from uvbekutils.bek_funcs import exit_yes, exit_yes_no
-from uvbekutils.pyautobek import alert_with_file_link, confirm
+from uvbekutils.pyautobek import confirm, confirm_with_file_link
 from uvbekutils.select_file import select_file
 from uvbekutils.standardize_columns import ColSpec, standardize_columns
 
@@ -36,7 +37,10 @@ MAP_START_DIR = str(Path(__file__).parent)
 
 PCP_REQUIRED_COLS = ["First Name", "Last Name", "Home Email", "Work Email"]
 REALM_REQUIRED_COLS = ["First Name", "Last Name", "Primary Email", "Alternate Email"]
-MAP_REQUIRED_COLS = ["pcp_column_name", "pcp_keep", "realm_column_name", "realm_keep"]
+MAP_REQUIRED_COLS = [
+    "pcp_column_name", "pcp_keep", "pcp_skip_tab",
+    "realm_column_name", "realm_keep", "realm_skip_tab",
+]
 
 PCP_FILE_PATTERN = "fourth-universalist-society-export*.csv"
 REALM_FILE_PATTERN = "*realm*.csv"
@@ -44,6 +48,13 @@ MAP_FILE_PATTERN = "*map*.xlsx"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def clean_col(s: str) -> str:
+    """Normalize a column name: NFC unicode, strip non-printable chars, collapse whitespace."""
+    s = unicodedata.normalize("NFC", str(s))
+    s = "".join(c for c in s if c.isprintable())
+    return " ".join(s.split())
+
 
 def prompt_direction() -> str:
     """Show a popup to choose transfer direction. Returns 'pcp_to_realm' or 'realm_to_pcp'."""
@@ -56,8 +67,8 @@ def prompt_direction() -> str:
 
 
 def strip_screen_name_prefixes(df: pd.DataFrame) -> pd.DataFrame:
-    """Strip 'screenname::' style prefixes from column headers (no-op if none present)."""
-    df.columns = [re.sub(r"^[^:]+::", "", col) for col in df.columns]
+    """Strip 'screenname::' style prefixes from column headers and normalize names."""
+    df.columns = [clean_col(re.sub(r"^\S+::", "", col)) for col in df.columns]
     return df
 
 
@@ -84,7 +95,7 @@ def build_renames(
     renames: dict[str, str] = {}
     for _, row in map_df.iterrows():
         keep_val = str(row[keep_col]).strip() if pd.notna(row[keep_col]) else ""
-        orig_name = str(row[origin_col]).strip()
+        orig_name = clean_col(row[origin_col])
         if not keep_val:
             continue
         if keep_val.lower() == "x":
@@ -130,32 +141,63 @@ def write_coverage_log(
     log_path: Path,
     origin_df: pd.DataFrame,
     renames: dict[str, str],
+    map_df: pd.DataFrame,
+    origin_col: str,
+    skip_tab_col: str,
 ) -> None:
     """Write a field-coverage report to log_path.
 
-    Reports two categories:
-    - Fields in the origin that are NOT being kept but contain at least one
-      non-empty value (data being silently discarded).
-    - Fields that ARE being kept but are entirely empty in the origin
-      (will produce blank columns in the output).
+    Reports three categories:
+    1. Kept but entirely empty — will produce blank columns in the output.
+    2. Not kept but has data — data being silently discarded.
+    3. Not in map at all but has data — completely unknown fields.
+    Fields listed in skip_tab_col are included but tabulation is suppressed.
     """
-    kept_cols = set(renames.keys())
     all_cols = set(origin_df.columns)
+
+    # Column names in origin_df and renames keys are already clean_col()-normalized.
+    # Map values are normalized here so all comparisons are plain equality.
+    kept_cols = set(renames.keys())
+    all_map_cols = set(map_df[origin_col].dropna().map(clean_col))
+    skip_tab_fields = set(
+        map_df.loc[map_df[skip_tab_col].replace("", pd.NA).notna(), origin_col]
+        .dropna().map(clean_col)
+    )
 
     def has_data(col: str) -> bool:
         return origin_df[col].replace("", pd.NA).notna().any()
 
     # Sort by ascending distinct-value count, then descending non-empty row count
     # within ties — low-cardinality/most-populated fields first, high-cardinality last.
-    def not_kept_sort_key(c: str) -> tuple:
+    def tabulation_sort_key(c: str) -> tuple:
         s = origin_df[c].replace("", pd.NA).dropna()
-        return (s.nunique(), -len(s))
+        return (c in skip_tab_fields, s.nunique(), -len(s))
 
+    # In the map but not being kept, and has data
     not_kept_with_data = sorted(
-        (c for c in all_cols - kept_cols if has_data(c)),
-        key=not_kept_sort_key,
+        (c for c in all_cols if c in all_map_cols and c not in kept_cols and has_data(c)),
+        key=tabulation_sort_key,
     )
-    kept_without_data = sorted(c for c in kept_cols & all_cols if not has_data(c))
+
+    # Not in the map at all, and has data
+    not_in_map = sorted(
+        (c for c in all_cols if c not in all_map_cols and has_data(c)),
+        key=tabulation_sort_key,
+    )
+
+    # Kept but entirely empty
+    kept_without_data = sorted(
+        c for c in kept_cols & all_cols if not has_data(c)
+    )
+
+    def write_tabulation(f, col: str) -> None:
+        if col in skip_tab_fields:
+            f.write(f"\n  {col}:\n    tabulate skipped\n")
+        else:
+            counts = origin_df[col].replace("", pd.NA).dropna().value_counts()
+            f.write(f"\n  {col} ({counts.sum()} values, {len(counts)} distinct):\n")
+            for val, n in counts.items():
+                f.write(f"    {val!r:<40}  {n}\n")
 
     with open(log_path, "w") as f:
         f.write("Transfer coverage log\n")
@@ -167,17 +209,30 @@ def write_coverage_log(
         if not kept_without_data:
             f.write("  (none)\n")
 
-        f.write(f"\n\n\nFields NOT kept but contain data ({len(not_kept_with_data)}):\n")
+        f.write(f"\n\n\n\nFields NOT kept but contain data ({len(not_kept_with_data)}):\n")
         if not not_kept_with_data:
             f.write("  (none)\n")
         for col in not_kept_with_data:
-            counts = origin_df[col].replace("", pd.NA).dropna().value_counts()
-            f.write(f"\n  {col} ({counts.sum()} values, {len(counts)} distinct):\n")
-            for val, n in counts.items():
-                f.write(f"    {val!r:<40}  {n}\n")
+            write_tabulation(f, col)
+
+        f.write(f"\n\n\n\nFields NOT IN MAP but contain data ({len(not_in_map)}):\n")
+        if not not_in_map:
+            f.write("  (none)\n")
+        for col in not_in_map:
+            write_tabulation(f, col)
+
+        f.flush()
+        os.fsync(f.fileno())
 
     print(f"Coverage log written to:\n  {log_path}")
-    alert_with_file_link("Coverage log written.", log_path, title="Transfer Coverage Log")
+    choice = confirm_with_file_link(
+        "Coverage log written. Review and continue, or exit.",
+        log_path,
+        title="Transfer Coverage Log",
+        buttons=["Continue", "Exit"],
+    )
+    if choice == "exit":
+        sys.exit(0)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -189,6 +244,7 @@ def main() -> None:
         keep_col = "pcp_keep"
         origin_col = "pcp_column_name"
         dest_col = "realm_column_name"
+        skip_tab_col = "pcp_skip_tab"
         required = PCP_REQUIRED_COLS
         file_pattern = PCP_FILE_PATTERN
         dest_label = "realm"
@@ -196,6 +252,7 @@ def main() -> None:
         keep_col = "realm_keep"
         origin_col = "realm_column_name"
         dest_col = "pcp_column_name"
+        skip_tab_col = "realm_skip_tab"
         required = REALM_REQUIRED_COLS
         file_pattern = REALM_FILE_PATTERN
         dest_label = "pcp"
@@ -232,15 +289,15 @@ def main() -> None:
     renames = build_renames(map_df, keep_col, origin_col, dest_col)
     show_mapping_popup(renames)
 
-    # Build, browse, review log, confirm, write
+    # Build, review log, browse, confirm, write
     output_df = build_output_df(origin_df, renames)
-
-    browse(output_df)
 
     datestamp = datetime.now().strftime("%Y%m%d")
     output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
     log_path = output_path.with_suffix(".log")
-    write_coverage_log(log_path, origin_df, renames)
+    write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col)
+
+    browse(output_df)
 
     exit_yes_no("Ready to write the output file. Continue?")
 
