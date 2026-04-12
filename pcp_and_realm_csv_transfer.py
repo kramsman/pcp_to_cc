@@ -12,6 +12,8 @@ import sys
 import unicodedata
 from datetime import datetime
 
+import subprocess
+
 import requests
 from dotenv import load_dotenv
 from google.cloud import secretmanager
@@ -62,19 +64,28 @@ def clean_col(s: str) -> str:
     return " ".join(s.split())
 
 
+def clean_map_col(s: str) -> str:
+    """Strip 'screenname::' prefix then normalize — mirrors how origin CSV headers are cleaned."""
+    return clean_col(re.sub(r"^.+::\s*", "", str(s)))
+
+
 def prompt_direction() -> str:
     """Show a popup to choose transfer direction. Returns 'pcp_to_realm' or 'realm_to_pcp'."""
     choice = confirm(
         "Select transfer direction:",
         title="Transfer Direction",
-        buttons=["PCP → Realm", "Realm → PCP"],
+        buttons=["PCP → Realm", "Realm → PCP", "Cancel"],
     )
-    return "pcp_to_realm" if choice == "pcp → realm" else "realm_to_pcp"
+    if choice == "pcp → realm":
+        return "pcp_to_realm"
+    if choice == "realm → pcp":
+        return "realm_to_pcp"
+    sys.exit(0)
 
 
 def strip_screen_name_prefixes(df: pd.DataFrame) -> pd.DataFrame:
     """Strip 'screenname::' style prefixes from column headers and normalize names."""
-    df.columns = [clean_col(re.sub(r"^\S+::", "", col)) for col in df.columns]
+    df.columns = [clean_col(re.sub(r"^.+::\s*", "", col)) for col in df.columns]
     return df
 
 
@@ -101,11 +112,12 @@ def build_renames(
     renames: dict[str, str] = {}
     for _, row in map_df.iterrows():
         keep_val = str(row[keep_col]).strip() if pd.notna(row[keep_col]) else ""
-        orig_name = clean_col(row[origin_col])
+        orig_name = clean_map_col(row[origin_col])
         if not keep_val:
             continue
         if keep_val.lower() == "x":
-            dest_name = str(row[dest_col]).strip() if pd.notna(row[dest_col]) else orig_name
+            raw_dest = str(row[dest_col]).strip() if pd.notna(row[dest_col]) else ""
+            dest_name = clean_map_col(raw_dest) if raw_dest else orig_name
             renames[orig_name] = dest_name if dest_name else orig_name
         else:
             renames[orig_name] = keep_val
@@ -150,6 +162,7 @@ def write_coverage_log(
     map_df: pd.DataFrame,
     origin_col: str,
     skip_tab_col: str,
+    direction: str,
 ) -> None:
     """Write a field-coverage report to log_path.
 
@@ -164,10 +177,10 @@ def write_coverage_log(
     # Column names in origin_df and renames keys are already clean_col()-normalized.
     # Map values are normalized here so all comparisons are plain equality.
     kept_cols = set(renames.keys())
-    all_map_cols = set(map_df[origin_col].dropna().map(clean_col))
+    all_map_cols = set(map_df[origin_col].dropna().map(clean_map_col))
     skip_tab_fields = set(
         map_df.loc[map_df[skip_tab_col].replace("", pd.NA).notna(), origin_col]
-        .dropna().map(clean_col)
+        .dropna().map(clean_map_col)
     )
 
     def has_data(col: str) -> bool:
@@ -205,8 +218,11 @@ def write_coverage_log(
             for val, n in counts.items():
                 f.write(f"    {val!r:<40}  {n}\n")
 
+    direction_label = "PCP → Realm" if direction == "pcp_to_realm" else "Realm → PCP"
+
     with open(log_path, "w") as f:
         f.write("Transfer coverage log\n")
+        f.write(f"Direction: {direction_label}\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
         f.write(f"Fields KEPT but entirely empty ({len(kept_without_data)}):\n")
@@ -304,6 +320,7 @@ def validate_pcp_data(
     origin_df: pd.DataFrame,
     renames: dict[str, str],
     log_path: Path,
+    direction: str,
 ) -> None:
     """Validate origin data against the live PCP field schema.
 
@@ -316,15 +333,38 @@ def validate_pcp_data(
     try:
         schema = _fetch_pcp_schema()
     except Exception as exc:
-        exit_yes(f"Could not fetch PCP field schema:\n{exc}")
-        return  # unreachable
+        if "reauthentication" in str(exc).lower() or "application-default login" in str(exc).lower():
+            print("GCP credentials expired — opening browser to reauthenticate …")
+            result = subprocess.run(
+                ["gcloud", "auth", "application-default", "login"],
+                check=False,
+            )
+            if result.returncode != 0:
+                exit_yes("GCP reauthentication failed. Please run:\n  gcloud auth application-default login\nthen try again.")
+                return
+            print("Reauthenticated. Retrying PCP schema fetch …")
+            try:
+                schema = _fetch_pcp_schema()
+            except Exception as exc2:
+                exit_yes(f"Could not fetch PCP field schema after reauthentication:\n{exc2}")
+                return
+        else:
+            exit_yes(f"Could not fetch PCP field schema:\n{exc}")
+            return  # unreachable
+
+    missing = [c for c in renames if c not in origin_df.columns]
+    if missing:
+        exit_yes(
+            "The following columns are marked as keep but not found in the input file:\n"
+            + "\n".join(missing)
+        )
 
     clean_fields: list[tuple[str, str]] = []   # (pcp_col, type)
     invalid_fields: list[dict] = []             # fields with bad option values
     unknown_fields: list[str] = []              # pcp_col not found in schema at all
 
     for origin_col, pcp_col in renames.items():
-        norm = clean_col(pcp_col)
+        norm = clean_map_col(pcp_col)
         if norm not in schema:
             unknown_fields.append(pcp_col)
             continue
@@ -361,11 +401,22 @@ def validate_pcp_data(
         else:
             clean_fields.append((pcp_col, dtype))
 
+    direction_label = "PCP → Realm" if direction == "pcp_to_realm" else "Realm → PCP"
+
     with open(log_path, "w") as f:
         f.write("PCP Data Validation Report\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Direction: {direction_label}\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Custom field definitions fetched from PCP: {len(schema)}\n\n")
 
-        f.write(f"Fields CLEAN — will import correctly ({len(clean_fields)}):\n")
+        col_w = max((len(k) for k in renames), default=20) + 2
+        f.write(f"Field mapping ({len(renames)} fields):\n")
+        f.write(f"  {'Origin field':<{col_w}}  Destination field\n")
+        f.write("  " + "-" * (col_w + 20) + "\n")
+        for orig, dest in renames.items():
+            f.write(f"  {orig:<{col_w}}  {dest}\n")
+
+        f.write(f"\n\nFields CLEAN — will import correctly ({len(clean_fields)}):\n")
         for pcp_col, dtype in clean_fields:
             f.write(f"  {pcp_col}  [{dtype}]\n")
         if not clean_fields:
@@ -386,6 +437,28 @@ def validate_pcp_data(
             f.write(f"  {col}\n")
         if not unknown_fields:
             f.write("  (none)\n")
+
+        f.write(f"\n\n\n\nFull PCP field schema ({len(schema)} custom fields):\n")
+        for field_name, field_info in sorted(schema.items()):
+            dtype = field_info["type"]
+            opts = field_info["options"]
+            if opts is not None:
+                f.write(f"  {field_name}  [{dtype}]\n")
+                for opt in opts:
+                    f.write(f"    - {opt}\n")
+            else:
+                f.write(f"  {field_name}  [{dtype}]\n")
+
+        f.write(f"\n\n\n\nActual values in input data — all mapped fields ({len(renames)}):\n")
+        for origin_col, pcp_col in renames.items():
+            series = origin_df[origin_col].replace("", pd.NA).dropna()
+            if series.empty:
+                f.write(f"\n  {pcp_col}  (no data)\n")
+            else:
+                counts = series.value_counts()
+                f.write(f"\n  {pcp_col}  ({counts.sum()} values, {len(counts)} distinct):\n")
+                for val, n in counts.items():
+                    f.write(f"    {val!r:<40}  {n}\n")
 
         f.flush()
         os.fsync(f.fileno())
@@ -459,14 +532,15 @@ def main() -> None:
     output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
 
     if direction == "realm_to_pcp":
-        pcp_val_log = output_path.with_name(output_path.stem + "_pcp_validation.log")
-        validate_pcp_data(origin_df, renames, pcp_val_log)
+        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pcp_val_log = output_path.with_name(output_path.stem + f"_pcp_validation_{run_ts}.log")
+        validate_pcp_data(origin_df, renames, pcp_val_log, direction)
 
     # Build, review log, browse, confirm, write
     output_df = build_output_df(origin_df, renames)
 
     log_path = output_path.with_suffix(".log")
-    write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col)
+    write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col, direction)
 
     browse(output_df)
 
