@@ -51,6 +51,7 @@ MAP_REQUIRED_COLS = [
 ]
 
 PCP_FILE_PATTERN = "fourth-universalist-society-export*.csv"
+PCP_TO_PCP_FILE_PATTERN = "pcp_*.csv"
 REALM_FILE_PATTERN = "*.csv"
 MAP_FILE_PATTERN = "*map*.xlsx"
 
@@ -69,17 +70,62 @@ def clean_map_col(s: str) -> str:
     return clean_col(re.sub(r"^.+::\s*", "", str(s)))
 
 
+def _excel_col_letter(n: int) -> str:
+    """Convert 0-based column index to Excel column letter (A, B, …, Z, AA, AB, …)."""
+    result = ""
+    n += 1
+    while n:
+        n, remainder = divmod(n - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def check_duplicate_cols(df: pd.DataFrame) -> str:
+    """Return a warning message if any columns share the same name after tab-prefix stripping.
+
+    Groups columns by their stripped name and reports any group with more than one member,
+    showing the original column name (with prefix) and the Excel column letter for each.
+    Returns an empty string if there are no duplicates.
+    """
+    from collections import defaultdict
+    stripped_to_originals: dict = defaultdict(list)
+    for i, col in enumerate(df.columns):
+        stripped = clean_map_col(col)
+        stripped_to_originals[stripped].append((i, col))
+
+    duplicates = {k: v for k, v in stripped_to_originals.items() if len(v) > 1}
+    if not duplicates:
+        return ""
+
+    lines = []
+    for stripped_name, occurrences in sorted(duplicates.items()):
+        lines.append(f'  "{stripped_name}"')
+        for col_idx, orig_name in occurrences:
+            lines.append(f'    Column {_excel_col_letter(col_idx)}:  "{orig_name}"')
+    return "Duplicate column names found after stripping tab prefixes:\n\n" + "\n".join(lines)
+
+
+def col_as_series(df: pd.DataFrame, col: str) -> pd.Series:
+    """Return df[col] as a flat Series, concatenating all instances if col is duplicated."""
+    data = df[col]
+    if isinstance(data, pd.DataFrame):
+        return pd.concat([data.iloc[:, i] for i in range(data.shape[1])], ignore_index=True)
+    return data
+
+
 def prompt_direction() -> str:
-    """Show a popup to choose transfer direction. Returns 'pcp_to_realm' or 'realm_to_pcp'."""
+    """Show a popup to choose transfer direction. Returns 'pcp_to_realm', 'realm_to_pcp', or 'pcp_to_pcp'."""
     choice = confirm(
         "Select transfer direction:",
         title="Transfer Direction",
-        buttons=["PCP → Realm", "Realm → PCP", "Cancel"],
+        buttons=["PCP → Realm", "Realm → PCP", "PCP → PCP", "Cancel"],
     )
     if choice == "pcp → realm":
         return "pcp_to_realm"
     if choice == "realm → pcp":
         return "realm_to_pcp"
+    if choice == "pcp → pcp":
+        return "pcp_to_pcp"
     sys.exit(0)
 
 
@@ -102,18 +148,25 @@ def build_renames(
     keep_col: str,
     origin_col: str,
     dest_col: str,
-) -> dict[str, str]:
-    """Return {origin_col_name: output_col_name} for all kept fields.
+) -> tuple[dict[str, str], list[str]]:
+    """Return ({origin_col_name: output_col_name}, warnings) for all kept fields.
 
     When keep_col is 'x', the output name is taken from dest_col (the
     destination system's column name). An explicit value in keep_col overrides
     dest_col and is used as the output name directly.
+    warnings lists map rows where keep is set but the origin column name is blank.
+    Row numbers are Excel row numbers (1-based, counting the header as row 1).
     """
     renames: dict[str, str] = {}
-    for _, row in map_df.iterrows():
+    warnings: list[str] = []
+    for idx, row in map_df.iterrows():
         keep_val = str(row[keep_col]).strip() if pd.notna(row[keep_col]) else ""
-        orig_name = clean_map_col(row[origin_col])
         if not keep_val:
+            continue
+        orig_name = clean_map_col(row[origin_col]) if pd.notna(row[origin_col]) else ""
+        if not orig_name:
+            excel_row = idx + 2  # +1 for 0-index, +1 for header row
+            warnings.append(f"  map row {excel_row}: keep='{keep_val}' but {origin_col} is blank")
             continue
         if keep_val.lower() == "x":
             raw_dest = str(row[dest_col]).strip() if pd.notna(row[dest_col]) else ""
@@ -121,7 +174,7 @@ def build_renames(
             renames[orig_name] = dest_name if dest_name else orig_name
         else:
             renames[orig_name] = keep_val
-    return renames
+    return renames, warnings
 
 
 def show_mapping_popup(renames: dict[str, str]) -> None:
@@ -151,8 +204,11 @@ def browse(df: pd.DataFrame) -> None:
     """Open dtale in the browser; continues when the dtale instance is shut down."""
     d = dtale.show(df, open_browser=True)
     print("Review the data in the browser. Use dtale's Shutdown button when done.")
-    while d.is_up():
-        time.sleep(1)
+    try:
+        while d.is_up():
+            time.sleep(1)
+    finally:
+        d.kill()
 
 
 def write_coverage_log(
@@ -163,6 +219,7 @@ def write_coverage_log(
     origin_col: str,
     skip_tab_col: str,
     direction: str,
+    append: bool = False,
 ) -> None:
     """Write a field-coverage report to log_path.
 
@@ -184,12 +241,12 @@ def write_coverage_log(
     )
 
     def has_data(col: str) -> bool:
-        return origin_df[col].replace("", pd.NA).notna().any()
+        return bool(col_as_series(origin_df, col).replace("", pd.NA).notna().any())
 
     # Sort by ascending distinct-value count, then descending non-empty row count
     # within ties — low-cardinality/most-populated fields first, high-cardinality last.
     def tabulation_sort_key(c: str) -> tuple:
-        s = origin_df[c].replace("", pd.NA).dropna()
+        s = col_as_series(origin_df, c).replace("", pd.NA).dropna()
         return (c in skip_tab_fields, s.nunique(), -len(s))
 
     # In the map but not being kept, and has data
@@ -213,14 +270,17 @@ def write_coverage_log(
         if col in skip_tab_fields:
             f.write(f"\n  {col}:\n    tabulate skipped\n")
         else:
-            counts = origin_df[col].replace("", pd.NA).dropna().value_counts()
+            counts = col_as_series(origin_df, col).replace("", pd.NA).dropna().value_counts()
             f.write(f"\n  {col} ({counts.sum()} values, {len(counts)} distinct):\n")
             for val, n in counts.items():
                 f.write(f"    {val!r:<40}  {n}\n")
 
-    direction_label = "PCP → Realm" if direction == "pcp_to_realm" else "Realm → PCP"
+    direction_labels = {"pcp_to_realm": "PCP → Realm", "realm_to_pcp": "Realm → PCP", "pcp_to_pcp": "PCP → PCP"}
+    direction_label = direction_labels.get(direction, direction)
 
-    with open(log_path, "w") as f:
+    with open(log_path, "a" if append else "w") as f:
+        if append:
+            f.write("\n\n" + "=" * 79 + "\n\n")
         f.write("Transfer coverage log\n")
         f.write(f"Direction: {direction_label}\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -255,6 +315,48 @@ def write_coverage_log(
     )
     if choice == "exit":
         sys.exit(0)
+
+
+# ── PCP field reformatting ────────────────────────────────────────────────────
+
+def _reformat_checkboxes(val: str) -> str:
+    """Convert PCP export comma-separated checkbox values to pipe-separated for reimport."""
+    return "|".join(p.strip() for p in val.split(";") if p.strip())
+
+
+# Map PCP field data_type → reformatter function. Add entries here for future types.
+FIELD_TYPE_REFORMATTERS = {
+    "checkboxes": _reformat_checkboxes,
+}
+
+
+def reformat_pcp_fields(
+    df: pd.DataFrame,
+    renames: dict[str, str],
+    schema: dict[str, dict],
+) -> None:
+    """Reformat field values in df in-place for types listed in FIELD_TYPE_REFORMATTERS.
+
+    Only modifies columns that (a) appear in renames, (b) are found in the PCP schema,
+    and (c) have a matching entry in FIELD_TYPE_REFORMATTERS.
+    """
+    for origin_col, pcp_col in renames.items():
+        if origin_col not in df.columns:
+            continue
+        norm = clean_map_col(pcp_col)
+        if norm not in schema:
+            continue
+        dtype = schema[norm]["type"]
+        reformatter = FIELD_TYPE_REFORMATTERS.get(dtype)
+        if reformatter is None:
+            continue
+        col_data = df[origin_col]
+        if isinstance(col_data, pd.DataFrame):
+            print(f"  Skipping [{dtype}]: {origin_col} (duplicate column name in input file)")
+            continue
+        mask = col_data.replace("", pd.NA).notna()
+        df.loc[mask, origin_col] = col_data[mask].astype(str).map(reformatter)
+        print(f"  Reformatted [{dtype}]: {origin_col}")
 
 
 # ── PCP validation ────────────────────────────────────────────────────────────
@@ -321,6 +423,8 @@ def validate_pcp_data(
     renames: dict[str, str],
     log_path: Path,
     direction: str,
+    schema: dict[str, dict] | None = None,
+    skip_tab_fields: set | None = None,
 ) -> None:
     """Validate origin data against the live PCP field schema.
 
@@ -328,29 +432,33 @@ def validate_pcp_data(
     Checks every mapped PCP column: unknown fields are flagged, and dropdown/
     checkbox fields have their values checked against valid options.
     Writes a validation log and shows a popup. Exits if user chooses not to continue.
+
+    Pass a pre-fetched schema to avoid a second API call (e.g. when reformat_pcp_fields
+    already fetched it). If schema is None, it will be fetched here.
     """
-    print("Fetching PCP field schema …")
-    try:
-        schema = _fetch_pcp_schema()
-    except Exception as exc:
-        if "reauthentication" in str(exc).lower() or "application-default login" in str(exc).lower():
-            print("GCP credentials expired — opening browser to reauthenticate …")
-            result = subprocess.run(
-                ["gcloud", "auth", "application-default", "login"],
-                check=False,
-            )
-            if result.returncode != 0:
-                exit_yes("GCP reauthentication failed. Please run:\n  gcloud auth application-default login\nthen try again.")
-                return
-            print("Reauthenticated. Retrying PCP schema fetch …")
-            try:
-                schema = _fetch_pcp_schema()
-            except Exception as exc2:
-                exit_yes(f"Could not fetch PCP field schema after reauthentication:\n{exc2}")
-                return
-        else:
-            exit_yes(f"Could not fetch PCP field schema:\n{exc}")
-            return  # unreachable
+    if schema is None:
+        print("Fetching PCP field schema …")
+        try:
+            schema = _fetch_pcp_schema()
+        except Exception as exc:
+            if "reauthentication" in str(exc).lower() or "application-default login" in str(exc).lower():
+                print("GCP credentials expired — opening browser to reauthenticate …")
+                result = subprocess.run(
+                    ["gcloud", "auth", "application-default", "login"],
+                    check=False,
+                )
+                if result.returncode != 0:
+                    exit_yes("GCP reauthentication failed. Please run:\n  gcloud auth application-default login\nthen try again.")
+                    return
+                print("Reauthenticated. Retrying PCP schema fetch …")
+                try:
+                    schema = _fetch_pcp_schema()
+                except Exception as exc2:
+                    exit_yes(f"Could not fetch PCP field schema after reauthentication:\n{exc2}")
+                    return
+            else:
+                exit_yes(f"Could not fetch PCP field schema:\n{exc}")
+                return  # unreachable
 
     missing = [c for c in renames if c not in origin_df.columns]
     if missing:
@@ -379,7 +487,7 @@ def validate_pcp_data(
         invalid_vals: dict[str, int] = {}
         affected_rows = 0
 
-        series = origin_df[origin_col].replace("", pd.NA).dropna().astype(str)
+        series = col_as_series(origin_df, origin_col).replace("", pd.NA).dropna().astype(str)
         for val in series:
             if dtype == "checkboxes":
                 bad = [p.strip() for p in val.split("|") if p.strip() and p.strip() not in valid_opts]
@@ -401,7 +509,8 @@ def validate_pcp_data(
         else:
             clean_fields.append((pcp_col, dtype))
 
-    direction_label = "PCP → Realm" if direction == "pcp_to_realm" else "Realm → PCP"
+    direction_labels = {"pcp_to_realm": "PCP → Realm", "realm_to_pcp": "Realm → PCP", "pcp_to_pcp": "PCP → PCP"}
+    direction_label = direction_labels.get(direction, direction)
 
     with open(log_path, "w") as f:
         f.write("PCP Data Validation Report\n")
@@ -438,7 +547,8 @@ def validate_pcp_data(
         if not unknown_fields:
             f.write("  (none)\n")
 
-        f.write(f"\n\n\n\nFull PCP field schema ({len(schema)} custom fields):\n")
+        f.write("\n\n" + "=" * 79 + "\n\n")
+        f.write(f"Full PCP field schema ({len(schema)} custom fields):\n")
         for field_name, field_info in sorted(schema.items()):
             dtype = field_info["type"]
             opts = field_info["options"]
@@ -449,9 +559,14 @@ def validate_pcp_data(
             else:
                 f.write(f"  {field_name}  [{dtype}]\n")
 
+        _skip = skip_tab_fields or set()
         f.write(f"\n\n\n\nActual values in input data — all mapped fields ({len(renames)}):\n")
-        for origin_col, pcp_col in renames.items():
-            series = origin_df[origin_col].replace("", pd.NA).dropna()
+        f.write(f"  (skip_tab_fields: {sorted(_skip)})\n")
+        for orig_col, pcp_col in renames.items():
+            if orig_col in _skip:
+                f.write(f"\n  {pcp_col}  (tabulate skipped)\n")
+                continue
+            series = col_as_series(origin_df, orig_col).replace("", pd.NA).dropna()
             if series.empty:
                 f.write(f"\n  {pcp_col}  (no data)\n")
             else:
@@ -464,14 +579,6 @@ def validate_pcp_data(
         os.fsync(f.fileno())
 
     print(f"PCP validation log written to:\n  {log_path}")
-    choice = confirm_with_file_link(
-        "PCP validation complete. Review results, then continue or exit.",
-        log_path,
-        title="PCP Data Validation",
-        buttons=["Continue", "Exit"],
-    )
-    if choice == "exit":
-        sys.exit(0)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -487,6 +594,14 @@ def main() -> None:
         required = PCP_REQUIRED_COLS
         file_pattern = PCP_FILE_PATTERN
         dest_label = "realm"
+    elif direction == "pcp_to_pcp":
+        keep_col = "pcp_keep"
+        origin_col = "pcp_column_name"
+        dest_col = "pcp_column_name"
+        skip_tab_col = "pcp_skip_tab"
+        required = PCP_REQUIRED_COLS
+        file_pattern = PCP_TO_PCP_FILE_PATTERN
+        dest_label = "pcp"
     else:
         keep_col = "realm_keep"
         origin_col = "realm_column_name"
@@ -506,6 +621,9 @@ def main() -> None:
         exit_yes("No origin file selected.")
 
     origin_df = pd.read_csv(origin_path)
+    dup_msg = check_duplicate_cols(origin_df)
+    if dup_msg:
+        exit_yes_no(dup_msg + "\n\nReformatting will be skipped for duplicate fields. Continue?")
     origin_df = strip_screen_name_prefixes(origin_df)
     validate_columns(origin_df, required, "Origin file")
 
@@ -525,22 +643,40 @@ def main() -> None:
 
     validate_columns(map_df, MAP_REQUIRED_COLS, "Map file")
 
-    renames = build_renames(map_df, keep_col, origin_col, dest_col)
-    show_mapping_popup(renames)
+    renames, map_warnings = build_renames(map_df, keep_col, origin_col, dest_col)
+    if map_warnings:
+        exit_yes_no(
+            "Map rows with keep set but blank origin column name (will be skipped):\n\n"
+            + "\n".join(map_warnings)
+            + "\n\nContinue?"
+        )
 
     datestamp = datetime.now().strftime("%Y%m%d")
     output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
+    log_path = output_path.with_suffix(".log")
 
-    if direction == "realm_to_pcp":
-        run_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pcp_val_log = output_path.with_name(output_path.stem + f"_pcp_validation_{run_ts}.log")
-        validate_pcp_data(origin_df, renames, pcp_val_log, direction)
+    skip_tab_fields = set(
+        map_df.loc[map_df[skip_tab_col].replace("", pd.NA).notna(), origin_col]
+        .dropna().map(clean_map_col)
+    )
+
+    if direction in ("realm_to_pcp", "pcp_to_pcp"):
+        if direction == "pcp_to_pcp":
+            print("Fetching PCP schema for reformatting …")
+            pcp_schema = _fetch_pcp_schema()
+            print("Reformatting fields …")
+            reformat_pcp_fields(origin_df, renames, pcp_schema)
+            validate_pcp_data(origin_df, renames, log_path, direction, schema=pcp_schema,
+                              skip_tab_fields=skip_tab_fields)
+        else:
+            validate_pcp_data(origin_df, renames, log_path, direction,
+                              skip_tab_fields=skip_tab_fields)
 
     # Build, review log, browse, confirm, write
     output_df = build_output_df(origin_df, renames)
 
-    log_path = output_path.with_suffix(".log")
-    write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col, direction)
+    write_coverage_log(log_path, origin_df, renames, map_df, origin_col, skip_tab_col, direction,
+                       append=direction in ("realm_to_pcp", "pcp_to_pcp"))
 
     browse(output_df)
 

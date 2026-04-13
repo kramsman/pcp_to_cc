@@ -10,7 +10,10 @@
       "WebFetch(domain:api.planningcenteronline.com)",
       "Bash(python3:*)",
       "Bash(/Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/.venv/bin/python3:*)",
-      "Bash(/Library/Frameworks/Python.framework/Versions/3.12/bin/python3:*)"
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.12/bin/python3:*)",
+      "Bash(python -m py_compile pcp_and_realm_csv_transfer.py)",
+      "Bash(ls pcp_*.csv)",
+      "Bash(ls *.csv)"
     ]
   }
 }
