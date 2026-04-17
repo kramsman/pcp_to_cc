@@ -14,7 +14,6 @@ from datetime import datetime
 
 import subprocess
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from dotenv import load_dotenv
@@ -387,39 +386,38 @@ def _fetch_pcp_schema() -> dict[str, dict]:
 
     schema: dict[str, dict] = {}
 
-    # Fetch custom field definitions (paginated)
-    custom_fields: list = []
-    url: str | None = f"{PCP_API_BASE}/field_definitions"
+    # Fetch field definitions with options sideloaded — one request per page
+    url: str | None = f"{PCP_API_BASE}/field_definitions?include=field_options&per_page=100"
     while url:
         resp = requests.get(url, auth=auth, headers=hdrs, timeout=10)
         resp.raise_for_status()
         body = resp.json()
-        custom_fields.extend(body.get("data", []))
+
+        # Build id→value lookup from the sideloaded field_options
+        option_values: dict[str, str] = {
+            item["id"]: item["attributes"]["value"]
+            for item in body.get("included", [])
+            if item.get("type") == "FieldOption"
+        }
+
+        for field in body.get("data", []):
+            attrs = field["attributes"]
+            dtype = attrs.get("data_type", "text")
+            entry: dict = {"type": dtype, "options": None}
+
+            if dtype in ("select", "checkboxes"):
+                related = (
+                    field.get("relationships", {})
+                         .get("field_options", {})
+                         .get("data", [])
+                )
+                entry["options"] = [
+                    option_values[r["id"]] for r in related if r["id"] in option_values
+                ]
+
+            schema[clean_col(attrs["name"])] = entry
+
         url = body.get("links", {}).get("next")
-
-    # Fetch options for dropdown/checkbox fields (in parallel)
-    def _fetch_field(field: dict) -> tuple[str, dict]:
-        fid = field["id"]
-        attrs = field["attributes"]
-        dtype = attrs.get("data_type", "text")
-        entry: dict = {"type": dtype, "options": None}
-
-        if dtype in ("select", "checkboxes"):
-            options: list[str] = []
-            opts_url: str | None = f"{PCP_API_BASE}/field_definitions/{fid}/field_options"
-            while opts_url:
-                resp = requests.get(opts_url, auth=auth, headers=hdrs, timeout=10)
-                resp.raise_for_status()
-                odata = resp.json()
-                options.extend(opt["attributes"]["value"] for opt in odata.get("data", []))
-                opts_url = odata.get("links", {}).get("next")
-            entry["options"] = options
-
-        return clean_col(attrs["name"]), entry
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for name, entry in pool.map(_fetch_field, custom_fields):
-            schema[name] = entry
 
     return schema
 
@@ -680,8 +678,7 @@ def main() -> None:
             + "\n\nContinue?"
         )
 
-    datestamp = datetime.now().strftime("%Y%m%d")
-    output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
+    output_path = Path(origin_path).parent / f"prgm_reformatted_{Path(origin_path).name}"
     log_path = output_path.with_suffix(".log")
     print(f"\nOutput will be written to:\n  {output_path}")
 
