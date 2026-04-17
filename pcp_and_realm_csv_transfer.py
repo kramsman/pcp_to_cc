@@ -13,6 +13,8 @@ import unicodedata
 from datetime import datetime
 
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from dotenv import load_dotenv
@@ -39,7 +41,7 @@ from uvbekutils.select_file import select_file
 from uvbekutils.standardize_columns import ColSpec, standardize_columns
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-MAP_START_DIR = str(Path(__file__).parent)
+MAP_START_DIR = "/Users/Denise/Library/CloudStorage/Dropbox/4thU/PCO-Realm-Imports-Exports"
 
 PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 
@@ -395,8 +397,8 @@ def _fetch_pcp_schema() -> dict[str, dict]:
         custom_fields.extend(body.get("data", []))
         url = body.get("links", {}).get("next")
 
-    # Fetch options for dropdown/checkbox fields
-    for field in custom_fields:
+    # Fetch options for dropdown/checkbox fields (in parallel)
+    def _fetch_field(field: dict) -> tuple[str, dict]:
         fid = field["id"]
         attrs = field["attributes"]
         dtype = attrs.get("data_type", "text")
@@ -413,7 +415,11 @@ def _fetch_pcp_schema() -> dict[str, dict]:
                 opts_url = odata.get("links", {}).get("next")
             entry["options"] = options
 
-        schema[clean_col(attrs["name"])] = entry
+        return clean_col(attrs["name"]), entry
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for name, entry in pool.map(_fetch_field, custom_fields):
+            schema[name] = entry
 
     return schema
 
@@ -443,10 +449,23 @@ def validate_pcp_data(
         except Exception as exc:
             if "reauthentication" in str(exc).lower() or "application-default login" in str(exc).lower():
                 print("GCP credentials expired — opening browser to reauthenticate …")
-                result = subprocess.run(
-                    ["gcloud", "auth", "application-default", "login"],
-                    check=False,
-                )
+                _auth_result: list = [None]
+                _auth_done = threading.Event()
+
+                def _run_gcloud_auth():
+                    _auth_result[0] = subprocess.run(
+                        ["gcloud", "auth", "application-default", "login"],
+                        check=False,
+                    )
+                    _auth_done.set()
+
+                threading.Thread(target=_run_gcloud_auth, daemon=True).start()
+                from PySide6.QtWidgets import QApplication
+                _qt_app = QApplication.instance()
+                while not _auth_done.wait(timeout=0.05):
+                    if _qt_app:
+                        _qt_app.processEvents()
+                result = _auth_result[0]
                 if result.returncode != 0:
                     exit_yes("GCP reauthentication failed. Please run:\n  gcloud auth application-default login\nthen try again.")
                     return
@@ -611,10 +630,20 @@ def main() -> None:
         file_pattern = REALM_FILE_PATTERN
         dest_label = "pcp"
 
+    # Select run directory
+    run_dir = select_file(
+        title="Select run directory",
+        start_dir=MAP_START_DIR,
+        files_like="*",
+        mode="dir",
+    )
+    if not run_dir:
+        exit_yes("No run directory selected.")
+
     # Select and load origin file
     origin_path = select_file(
         title="Select origin data file",
-        start_dir=MAP_START_DIR,
+        start_dir=run_dir,
         files_like=file_pattern,
     )
     if not origin_path:
@@ -654,6 +683,7 @@ def main() -> None:
     datestamp = datetime.now().strftime("%Y%m%d")
     output_path = Path(origin_path).parent / f"xfer_{dest_label}_{datestamp}.csv"
     log_path = output_path.with_suffix(".log")
+    print(f"\nOutput will be written to:\n  {output_path}")
 
     skip_tab_fields = set(
         map_df.loc[map_df[skip_tab_col].replace("", pd.NA).notna(), origin_col]
