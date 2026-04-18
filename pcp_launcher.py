@@ -19,11 +19,11 @@ if str(_UTILS_ROOT) not in sys.path:
 
 from uvbekutils.pyautobek import confirm
 
-HERE = Path(__file__).parent
+ROOT_PATH = Path(__file__).parent
 
 TOOLS = {
     "Transfer Data": {
-        "script": HERE / "pcp_and_realm_csv_transfer.py",
+        "script": ROOT_PATH / "pcp_and_realm_csv_transfer.py",
         "description": (
             "Transfer member data between Planning Center People (PCP) and Realm.\n"
             "Reads an exported CSV, applies a column mapping spreadsheet, and writes\n"
@@ -31,7 +31,7 @@ TOOLS = {
         ),
     },
     "Find PCP Field IDs": {
-        "script": HERE / "find_pcp_custom_field_ids.py",
+        "script": ROOT_PATH / "find_pcp_custom_field_ids.py",
         "description": (
             "List all custom field definitions in Planning Center People,\n"
             "showing each field's numeric ID, name, and type.\n"
@@ -39,7 +39,7 @@ TOOLS = {
         ),
     },
     "Find CC List IDs": {
-        "script": HERE / "find_cc_list_ids.py",
+        "script": ROOT_PATH / "find_cc_list_ids.py",
         "description": (
             "List all contact lists in Constant Contact,\n"
             "showing each list's UUID, name, status, and member count.\n"
