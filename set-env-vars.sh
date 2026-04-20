@@ -20,11 +20,13 @@ ENV_VARS=(
 
   # ── PCP field definition IDs ───────────────────────────────────────────────
   # Find by running: python find_pcp_custom_field_ids.py  (requires PCP credentials in Secret Manager)
+  # Can be run in utility pcp_launcher.py
   "PCP_NEWSLETTER_TRIGGER_FIELD_ID=1039700"
 
   # ── Constant Contact list IDs ──────────────────────────────────────────────
   # Find in CC: Contacts → Lists → click a list → UUID is in the URL.
   #  "CC_NEWSLETTER_LIST_ID=dd8406e2-129f-11ed-a1a4-fa163eaee913"  Racial Justice
+  # Can be run in utility pcp_launcher.py
   "CC_NEWSLETTER_LIST_ID=a8a7f3ea-1298-11ed-a555-fa163ec0164a"  # Newsletter
 
   # ── GCP ────────────────────────────────────────────────────────────────────

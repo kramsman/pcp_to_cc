@@ -385,7 +385,8 @@ def webhook():
 
     # ── Validate ─────────────────────────────────────────────────────────────
     if not isinstance(payload, dict):
-        logger.warning("Rejected: payload is not a JSON object")
+        raw = request.get_data(as_text=True)
+        logger.warning(f"Rejected: payload is not a JSON object\nRaw body:\n{raw}")
         return jsonify({"error": "payload must be a JSON object"}), 400
 
     try:
@@ -397,7 +398,10 @@ def webhook():
         return jsonify({"error": "payload missing event name"}), 400
 
     if event_name != "people.v2.events.person.created":
-        logger.info(f"Ignored event: {event_name!r}")
+        logger.info(
+            f"Ignored event: {event_name!r}\nPayload:\n"
+            + json.dumps(payload, indent=2, default=str)
+        )
         return jsonify({"status": "ignored", "event": event_name}), 200
 
     person_id = _extract_person_id(payload)
