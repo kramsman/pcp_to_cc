@@ -23,6 +23,8 @@ import config
 
 app = Flask(__name__)
 
+_last_payload: dict | None = None
+
 # ─── GCP Secret Manager ───────────────────────────────────────────────────────
 
 _secret_client: secretmanager.SecretManagerServiceClient | None = None
@@ -398,6 +400,8 @@ def webhook():
         return jsonify({"error": "payload missing event name"}), 400
 
     if event_name != "people.v2.events.person.created":
+        global _last_payload
+        _last_payload = {"event": event_name, "payload": payload}
         logger.info(
             f"Ignored event: {event_name!r}\nPayload:\n"
             + json.dumps(payload, indent=2, default=str)
@@ -470,6 +474,14 @@ def settings():
         "CC_API_BASE":      config.CC_API_BASE,
         "CC_LIST_RULES":    rules_summary,
     }), 200
+
+
+@app.route("/payload", methods=["GET"])
+def last_payload():
+    """Return the most recent unrecognized webhook payload as clean JSON."""
+    if _last_payload is None:
+        return jsonify({"status": "none"}), 200
+    return jsonify(_last_payload), 200
 
 
 # ─── Dev server ───────────────────────────────────────────────────────────────

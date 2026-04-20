@@ -1,0 +1,24 @@
+{
+    "event": "people.v2.events.workflow_card.destroyed",
+    "payload": {
+        "data": [
+            {
+                "attributes": {
+                    "attempt": 1,
+                    "name": "people.v2.events.workflow_card.destroyed",
+                    "payload": "{\"data\":{\"type\":\"WorkflowCard\",\"id\":\"48256640\",\"relationships\":{\"assignee\":{\"data\":{\"type\":\"Assignee\",\"id\":\"190519711\"}},\"person\":{\"data\":{\"type\":\"Person\",\"id\":\"190947666\"}},\"workflow\":{\"data\":{\"type\":\"Workflow\",\"id\":\"730471\"}},\"current_step\":{\"data\":{\"type\":\"WorkflowStep\",\"id\":\"1994219\"}}},\"links\":{\"self\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48256640\"}},\"meta\":{\"parent\":{\"id\":\"730471\",\"type\":\"Workflow\"}}}"
+                },
+                "id": "789ee287-aae0-444f-a6fc-7516c868c6b2",
+                "relationships": {
+                    "organization": {
+                        "data": {
+                            "id": "526881",
+                            "type": "Organization"
+                        }
+                    }
+                },
+                "type": "EventDelivery"
+            }
+        ]
+    }
+}

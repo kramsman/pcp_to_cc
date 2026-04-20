@@ -1,0 +1,24 @@
+{
+    "event": "people.v2.events.workflow_card.created",
+    "payload": {
+        "data": [
+            {
+                "attributes": {
+                    "attempt": 1,
+                    "name": "people.v2.events.workflow_card.created",
+                    "payload": "{\"data\":{\"type\":\"WorkflowCard\",\"id\":\"48257343\",\"attributes\":{\"calculated_due_at_in_days_ago\":null,\"completed_at\":null,\"created_at\":\"2026-04-20T01:41:03Z\",\"flagged_for_notification_at\":null,\"moved_to_step_at\":\"2026-04-20T01:41:03Z\",\"overdue\":false,\"removed_at\":null,\"snooze_until\":null,\"stage\":\"ready\",\"sticky_assignment\":false,\"updated_at\":\"2026-04-20T01:41:03Z\"},\"relationships\":{\"assignee\":{\"data\":{\"type\":\"Assignee\",\"id\":\"190519711\"}},\"person\":{\"data\":{\"type\":\"Person\",\"id\":\"190947666\"}},\"workflow\":{\"data\":{\"type\":\"Workflow\",\"id\":\"730471\"}},\"current_step\":{\"data\":{\"type\":\"WorkflowStep\",\"id\":\"1994220\"}}},\"links\":{\"activities\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/activities\",\"assignee\":\"https://api.planningcenteronline.com/people/v2/people/190519711\",\"current_step\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/steps/1994220\",\"go_back\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/go_back\",\"notes\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/notes\",\"person\":\"https://api.planningcenteronline.com/people/v2/people/190947666\",\"promote\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/promote\",\"remove\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/remove\",\"restore\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/restore\",\"send_email\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/send_email\",\"skip_step\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/skip_step\",\"snooze\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/snooze\",\"unsnooze\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343/unsnooze\",\"workflow\":\"https://api.planningcenteronline.com/people/v2/workflows/730471\",\"self\":\"https://api.planningcenteronline.com/people/v2/workflows/730471/cards/48257343\",\"html\":\"https://people.planningcenteronline.com/workflows/730471/steps/1994220/assignees/190519711/ready/cards/48257343\"}},\"included\":[],\"meta\":{\"can_include\":[\"assignee\",\"current_step\",\"person\",\"workflow\"],\"parent\":{\"id\":\"730471\",\"type\":\"Workflow\"},\"event_time\":\"2026-04-20T01:41:04Z\",\"idempotency_token\":\"019da88c-5b91-7b03-b045-209126c44c13\"}}"
+                },
+                "id": "d6748dcd-e3b2-48a0-96f8-4850c616f8d6",
+                "relationships": {
+                    "organization": {
+                        "data": {
+                            "id": "526881",
+                            "type": "Organization"
+                        }
+                    }
+                },
+                "type": "EventDelivery"
+            }
+        ]
+    }
+}
