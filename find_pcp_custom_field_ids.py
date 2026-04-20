@@ -20,12 +20,14 @@ PCP_NEWSLETTER_TRIGGER_FIELD_ID in .env and set-env-vars.sh.
 import os
 import sys
 
-import requests
-from dotenv import load_dotenv
-from google.api_core import retry as api_retry
-from google.cloud import secretmanager
-from uvbekutils.pyautobek import confirm_with_file_link
-from bekgoogle import ensure_adc_auth
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")  # suppress gRPC noise before grpc loads
+
+import requests  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from google.api_core import retry as api_retry  # noqa: E402
+from google.cloud import secretmanager  # noqa: E402
+from uvbekutils.pyautobek import confirm_with_file_link  # noqa: E402
+from bekgoogle import ensure_adc_auth  # noqa: E402
 
 load_dotenv()
 
@@ -74,9 +76,7 @@ def main():
 
     lines: list[str] = []
 
-    _emit(lines, f"PCP_APP_ID  : len={len(app_id)}  first4={app_id[:4]!r}")
-    _emit(lines, f"PCP_SECRET  : len={len(secret)}  first4={secret[:4]!r}\n")
-    _emit(lines, f"Fetching field definitions from {url} ...\n")
+    _emit(lines, "\n=== Custom Fields ===\n")
 
     fields = []
     next_url = url
@@ -105,8 +105,6 @@ def main():
         _emit(lines, f"{fid:<12}  {name:<40}  {ftype}")
 
     _emit(lines, f"\nTotal: {len(fields)} field definitions")
-    _emit(lines, "\nNext step: copy the ID for your newsletter opt-in field and set it as:")
-    _emit(lines, "  PCP_NEWSLETTER_TRIGGER_FIELD_ID=<id>  in .env and in set-env-vars.sh")
 
     # --- Workflows ---
     _emit(lines, "\n\n=== Workflows ===\n")

@@ -1,0 +1,69 @@
+{
+    "data": {
+        "type": "WorkflowCard",
+        "id": "48277815",
+        "attributes": {
+            "calculated_due_at_in_days_ago": null,
+            "completed_at": "2026-04-20T14:04:07Z",
+            "created_at": "2026-04-20T12:21:32Z",
+            "flagged_for_notification_at": null,
+            "moved_to_step_at": "2026-04-20T14:04:07Z",
+            "overdue": false,
+            "removed_at": null,
+            "snooze_until": null,
+            "stage": "completed",
+            "sticky_assignment": false,
+            "updated_at": "2026-04-20T14:04:07Z"
+        },
+        "relationships": {
+            "assignee": {
+                "data": {
+                    "type": "Assignee",
+                    "id": "190519711"
+                }
+            },
+            "person": {
+                "data": {
+                    "type": "Person",
+                    "id": "190947666"
+                }
+            },
+            "workflow": {
+                "data": {
+                    "type": "Workflow",
+                    "id": "725397"
+                }
+            },
+            "current_step": {
+                "data": null
+            }
+        },
+        "links": {
+            "activities": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/activities",
+            "assignee": "https://api.planningcenteronline.com/people/v2/people/190519711",
+            "current_step": null,
+            "go_back": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/go_back",
+            "notes": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/notes",
+            "person": "https://api.planningcenteronline.com/people/v2/people/190947666",
+            "promote": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/promote",
+            "remove": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/remove",
+            "restore": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/restore",
+            "send_email": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/send_email",
+            "skip_step": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/skip_step",
+            "snooze": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/snooze",
+            "unsnooze": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815/unsnooze",
+            "workflow": "https://api.planningcenteronline.com/people/v2/workflows/725397",
+            "self": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48277815",
+            "html": "https://people.planningcenteronline.com/workflows/725397/steps/completed/assignees/190519711/completed/cards/48277815"
+        }
+    },
+    "included": [],
+    "meta": {
+        "can_include": [
+            "assignee",
+            "current_step",
+            "person",
+            "workflow"
+        ]
+    }
+}
