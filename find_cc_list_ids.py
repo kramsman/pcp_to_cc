@@ -20,9 +20,14 @@ CC_NEWSLETTER_LIST_ID in .env and set-env-vars.sh.
 import os
 import sys
 
-import requests
-from dotenv import load_dotenv
-from google.cloud import secretmanager
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+
+import requests  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from google.api_core import retry as api_retry  # noqa: E402
+from google.cloud import secretmanager  # noqa: E402
+from uvbekutils.pyautobek import confirm_with_file_link  # noqa: E402
+from bekgoogle import ensure_adc_auth  # noqa: E402
 
 load_dotenv()
 
@@ -39,11 +44,18 @@ def _get_secret(secret_id: str) -> str:
             _client = secretmanager.SecretManagerServiceClient()
         name = f"projects/{_project_id}/secrets/{secret_id}/versions/latest"
         try:
-            resp = _client.access_secret_version(request={"name": name}, timeout=10)
+            resp = _client.access_secret_version(
+                request={"name": name},
+                retry=api_retry.Retry(deadline=5.0),
+            )
         except Exception as e:
-            print(f"ERROR: Could not fetch secret '{secret_id}' from Secret Manager: {e}")
-            print("Fix: run  gcloud auth application-default login --account=office2@4thu.org")
-            sys.exit(1)
+            if "Reauthentication is needed" in str(e):
+                ensure_adc_auth()
+                _client = secretmanager.SecretManagerServiceClient()
+                resp = _client.access_secret_version(request={"name": name})
+            else:
+                print(f"ERROR: Could not fetch secret '{secret_id}' from Secret Manager: {e}")
+                sys.exit(1)
         _cache[secret_id] = resp.payload.data.decode("UTF-8")
     return _cache[secret_id]
 
@@ -68,7 +80,6 @@ def _refresh_cc_token() -> str | None:
         if not new_token:
             print("ERROR: Token refresh response missing access_token")
             return None
-        # Write new token back to Secret Manager
         parent = f"projects/{_project_id}/secrets/CC_ACCESS_TOKEN"
         payload = secretmanager.SecretPayload(data=new_token.encode("UTF-8"))
         _client.add_secret_version(request={"parent": parent, "payload": payload})
@@ -78,6 +89,11 @@ def _refresh_cc_token() -> str | None:
     except requests.RequestException as e:
         print(f"ERROR: Token refresh failed: {e}")
         return None
+
+
+def _emit(lines: list[str], text: str) -> None:
+    lines.append(text)
+    print(text)
 
 
 def main():
@@ -91,7 +107,8 @@ def main():
         "Content-Type": "application/json",
     }
 
-    print(f"Fetching contact lists from {CC_API_BASE}/contact_lists ...\n")
+    lines: list[str] = []
+    _emit(lines, "\n=== Contact Lists ===\n")
 
     lists = []
     next_url = f"{CC_API_BASE}/contact_lists"
@@ -118,21 +135,29 @@ def main():
         next_url = data.get("_links", {}).get("next", {}).get("href")
 
     if not lists:
-        print("No contact lists found.")
-        return
+        _emit(lines, "No contact lists found.")
+    else:
+        _emit(lines, f"{'UUID':<40}  {'Name':<40}  {'Status':<8}  Members")
+        _emit(lines, "-" * 100)
+        for lst in lists:
+            uuid         = lst.get("list_id", "")
+            name         = lst.get("name", "")
+            status       = lst.get("status", "")
+            member_count = lst.get("membership_count", "")
+            _emit(lines, f"{uuid:<40}  {name:<40}  {status:<8}  {member_count}")
+        _emit(lines, f"\nTotal: {len(lists)} contact lists")
 
-    print(f"{'UUID':<40}  {'Name':<40}  {'Status':<8}  Members")
-    print("-" * 100)
-    for lst in lists:
-        uuid        = lst.get("list_id", "")
-        name        = lst.get("name", "")
-        status      = lst.get("status", "")
-        member_count = lst.get("membership_count", "")
-        print(f"{uuid:<40}  {name:<40}  {status:<8}  {member_count}")
+    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cc_list_ids.txt")
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines))
+    print(f"\nSaved to: {out_path}")
 
-    print(f"\nTotal: {len(lists)} contact lists")
-    print("\nNext step: copy the UUID for your list and set it as:")
-    print("  CC_NEWSLETTER_LIST_ID=<uuid>  in .env and in set-env-vars.sh")
+    confirm_with_file_link(
+        "Contact lists written.",
+        out_path,
+        title="CC List IDs",
+        buttons=["OK"],
+    )
 
 
 if __name__ == "__main__":
