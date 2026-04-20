@@ -168,3 +168,5 @@ cython_debug/
 !pcp_realm_map.xlsx
 *.csv
 /img.png
+/pcp_field_and_workflow_ids.txt
+/gitupdater.json
