@@ -402,6 +402,7 @@ def webhook():
             f"Ignored event: {event_name!r}\nPayload:\n"
             + json.dumps(payload, indent=2, default=str)
         )
+        logger.info("Compact payload (copy): " + json.dumps(payload, default=str))
         return jsonify({"status": "ignored", "event": event_name}), 200
 
     person_id = _extract_person_id(payload)
