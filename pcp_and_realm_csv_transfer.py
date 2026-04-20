@@ -19,8 +19,10 @@ import requests
 from dotenv import load_dotenv
 from google.cloud import secretmanager
 
-sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
-if True:
+try:
+    import gitupdater
+except ImportError:
+    sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
     import gitupdater
 from pathlib import Path
 

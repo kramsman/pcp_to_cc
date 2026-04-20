@@ -9,8 +9,10 @@ import sys
 import subprocess
 from pathlib import Path
 
-sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
-if True:
+try:
+    import gitupdater
+except ImportError:
+    sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
     import gitupdater
 
 _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uvbekutils")
