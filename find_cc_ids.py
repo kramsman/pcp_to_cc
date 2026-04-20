@@ -11,7 +11,7 @@ Prerequisites:
     3. gcloud auth application-default login has been run.
 
 Usage:
-    python find_cc_list_ids.py
+    python find_cc_ids.py
 
 Then copy the UUID for your list and set it as
 CC_NEWSLETTER_LIST_ID in .env and set-env-vars.sh.
@@ -147,7 +147,7 @@ def main():
             _emit(lines, f"{uuid:<40}  {name:<40}  {status:<8}  {member_count}")
         _emit(lines, f"\nTotal: {len(lists)} contact lists")
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cc_list_ids.txt")
+    out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     print(f"\nSaved to: {out_path}")

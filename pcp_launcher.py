@@ -32,18 +32,18 @@ TOOLS = {
             "a reformatted CSV ready for import into the destination system."
         ),
     },
-    "Find PCP Field IDs": {
-        "script": ROOT_PATH / "find_pcp_custom_field_ids.py",
+    "Find PCP IDs": {
+        "script": ROOT_PATH / "find_pcp_ids.py",
         "description": (
-            "List all custom field definitions in Planning Center People,\n"
+            "List all selected definitions in Planning Center People,\n"
             "showing each field's numeric ID, name, and type.\n"
             "Use this to find field IDs needed for configuration."
         ),
     },
-    "Find CC List IDs": {
-        "script": ROOT_PATH / "find_cc_list_ids.py",
+    "Find CC IDs": {
+        "script": ROOT_PATH / "find_cc_ids.py",
         "description": (
-            "List all contact lists in Constant Contact,\n"
+            "List all selected definitions in Constant Contact,\n"
             "showing each list's UUID, name, status, and member count.\n"
             "Use this to find list IDs needed for configuration."
         ),

@@ -31,7 +31,7 @@ PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 
 # PCP custom field definition IDs.
 # Each custom field in PCP has a numeric ID you set once here.
-# How to find the ID: run python find_pcp_custom_field_ids.py locally (requires PCP credentials).
+# How to find the ID: run python find_pcp_ids.py locally (requires PCP credentials).
 # Then set the env var (e.g. PCP_NEWSLETTER_TRIGGER_FIELD_ID=12345) in .env or set-env-vars.sh.
 PCP_FIELD_IDS = {
     "newsletter_opt_in": os.environ.get("PCP_NEWSLETTER_TRIGGER_FIELD_ID", ""),  # PCP field definition ID for the newsletter opt-in field

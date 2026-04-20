@@ -11,7 +11,7 @@ Prerequisites:
     3. gcloud auth application-default login has been run.
 
 Usage:
-    python find_pcp_custom_field_ids.py
+    python find_pcp_ids.py
 
 Then copy the ID for your field and set it as
 PCP_NEWSLETTER_TRIGGER_FIELD_ID in .env and set-env-vars.sh.
@@ -134,7 +134,7 @@ def main():
             _emit(lines, f"{wid:<12}  {name:<50}  {campus}")
         _emit(lines, f"\nTotal: {len(workflows)} workflows")
 
-    out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pcp_field_and_workflow_ids.txt")
+    out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     print(f"\nSaved to: {out_path}")

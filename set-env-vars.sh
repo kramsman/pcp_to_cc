@@ -19,7 +19,7 @@ ENV_VARS=(
   "LOG_PAYLOADS=true"
 
   # ── PCP field definition IDs ───────────────────────────────────────────────
-  # Find by running: python find_pcp_custom_field_ids.py  (requires PCP credentials in Secret Manager)
+  # Find by running: python find_pcp_ids.py  (requires PCP credentials in Secret Manager)
   # Can be run in utility pcp_launcher.py
   "PCP_NEWSLETTER_TRIGGER_FIELD_ID=1039700"
 

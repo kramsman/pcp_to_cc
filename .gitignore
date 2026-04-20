@@ -171,3 +171,5 @@ cython_debug/
 /pcp_field_and_workflow_ids.txt
 /gitupdater.json
 /cc_list_ids.txt
+/find_cc_ids.txt
+/find_pcp_ids.txt
