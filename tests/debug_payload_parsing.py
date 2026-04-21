@@ -14,10 +14,14 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 _PAYLOADS = os.path.join(os.path.dirname(__file__), "payloads")
 
-PAYLOAD_FILES = {
+PCP_PAYLOAD_FILES = {
     "workflow_complete  (direct REST response)": os.path.join(_PAYLOADS, "PCP", "workflow_complete.json"),
     "create_flow_card   (webhook with event field)": os.path.join(_PAYLOADS, "PCP", "create_flow_card.json"),
     "person_created     (legacy webhook, no event field)": os.path.join(_PAYLOADS, "person_created_webhook.json"),
+}
+
+CC_PAYLOAD_FILES = {
+    "cc_add_contact     (add/update contact request)": os.path.join(_PAYLOADS, "cc_add_contact.json"),
 }
 
 
@@ -106,6 +110,31 @@ class EventDelivery(BaseModel):
     attributes: EventDeliveryAttrs
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# CONSTANT CONTACT MODELS  (completely separate from PCP)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class CcEmailAddress(BaseModel):
+    address: str
+    permission_to_send: str
+
+
+class CcAddContactRequest(BaseModel):
+    first_name: str
+    last_name: str
+    email_address: CcEmailAddress
+    create_source: Optional[str] = None
+    list_memberships: list[str] = []
+
+
+def parse_cc_payload(raw: dict) -> CcAddContactRequest:
+    return CcAddContactRequest.model_validate(raw)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PCP MODELS
+# ═══════════════════════════════════════════════════════════════════════════
+
 # ── Format A: Direct REST response (workflow_complete.json) ────────────────
 
 class WorkflowCompleteResponse(BaseModel):
@@ -179,13 +208,22 @@ def _debug_parsed(label: str, parsed: object) -> None:
         elif isinstance(inner, PersonData):
             print(f"  name         : {inner.attributes.first_name} {inner.attributes.last_name}")
 
+    elif isinstance(parsed, CcAddContactRequest):
+        print(f"  name         : {parsed.first_name} {parsed.last_name}")
+        print(f"  email        : {parsed.email_address.address}")
+        print(f"  permission   : {parsed.email_address.permission_to_send}")
+        print(f"  lists        : {parsed.list_memberships}")
+
     print(f"\n  full model_dump:")
     import pprint
     pprint.pprint(parsed.model_dump(), indent=4)
 
 
-def main() -> None:
-    for label, path in PAYLOAD_FILES.items():
+def _run_section(title: str, files: dict, parser) -> None:
+    print(f"\n{'╔' + '═' * 58 + '╗'}")
+    print(f"  {title}")
+    print(f"{'╚' + '═' * 58 + '╝'}")
+    for label, path in files.items():
         print(f"\n{'═' * 60}")
         print(f"FILE: {os.path.basename(path)}")
         if not os.path.exists(path):
@@ -194,10 +232,15 @@ def main() -> None:
         with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
         try:
-            parsed = parse_pcp_payload(raw)
+            parsed = parser(raw)
             _debug_parsed(label, parsed)
         except ValidationError as exc:
             print(f"  *** VALIDATION ERROR:\n{exc}")
+
+
+def main() -> None:
+    _run_section("PCP — Planning Center People", PCP_PAYLOAD_FILES, parse_pcp_payload)
+    _run_section("CC — Constant Contact", CC_PAYLOAD_FILES, parse_cc_payload)
 
 
 if __name__ == "__main__":
