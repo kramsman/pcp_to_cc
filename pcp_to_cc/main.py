@@ -13,13 +13,218 @@ Usage (local dev):
 
 import json
 import os
+from datetime import datetime
+from typing import Annotated, Any, Literal, Optional, Union
 
 import requests
 from flask import Flask, jsonify, request
 from google.cloud import secretmanager
 from loguru import logger
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 import config
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PYDANTIC MODELS
+# ─────────────────────────────────────────────────────────────────────────
+# Two independent model trees:
+#   1. Incoming webhook  → parse_webhook_payload()  replaces _extract_person_id()
+#   2. PCP API response  → PcpPersonResponse        replaces parse_person()
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Shared ─────────────────────────────────────────────────────────────────
+
+class TypedRef(BaseModel):
+    type: str
+    id: str
+
+class RelRef(BaseModel):
+    data: Optional[TypedRef] = None
+
+
+# ── 1. Incoming webhook (LegacyWebhookEvent) ──────────────────────────────
+# PCP sends:  { "data": [ { "type": "EventDelivery",
+#                           "attributes": { "name": "...", "payload": "<json str>" } } ] }
+# The inner "payload" field is a raw JSON string — model_validator decodes it.
+
+class InnerPersonAttrs(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+class InnerPersonData(BaseModel):
+    type: Literal["Person"]
+    id: str
+    attributes: InnerPersonAttrs
+
+class InnerPayload(BaseModel):
+    data: InnerPersonData
+
+class WebhookDeliveryAttrs(BaseModel):
+    name: str
+    attempt: int = 1
+    payload: InnerPayload
+
+    @model_validator(mode="before")
+    @classmethod
+    def _decode_payload_string(cls, v):
+        if isinstance(v.get("payload"), str):
+            v["payload"] = json.loads(v["payload"])
+        return v
+
+class WebhookDelivery(BaseModel):
+    type: Literal["EventDelivery"]
+    id: str = ""
+    attributes: WebhookDeliveryAttrs
+
+class LegacyWebhookEvent(BaseModel):
+    data: list[WebhookDelivery]
+
+    @property
+    def delivery(self) -> WebhookDelivery:
+        return self.data[0]
+
+    @property
+    def event_name(self) -> str:
+        return self.delivery.attributes.name
+
+    @property
+    def person_id(self) -> str:
+        return self.delivery.attributes.payload.data.id
+
+
+def parse_webhook_payload(raw: dict) -> LegacyWebhookEvent:
+    """Parse incoming PCP webhook dict. Raises ValidationError if malformed."""
+    return LegacyWebhookEvent.model_validate(raw)
+
+
+# ── 3. Direct REST poll response (workflow_complete) ──────────────────────
+# Returned by GET /people/v2/workflows/{id}/cards/{id}
+# Structure: { "data": {WorkflowCard}, "included": [], "meta": {} }
+
+class WorkflowCardAttrs(BaseModel):
+    stage: str
+    completed_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    overdue: bool
+    removed_at: Optional[datetime] = None
+    snooze_until: Optional[datetime] = None
+
+class WorkflowCardRels(BaseModel):
+    assignee: RelRef
+    person: RelRef
+    workflow: RelRef
+    current_step: RelRef
+
+class WorkflowCardData(BaseModel):
+    type: Literal["WorkflowCard"]
+    id: str
+    attributes: WorkflowCardAttrs
+    relationships: WorkflowCardRels
+
+class WorkflowCompleteResponse(BaseModel):
+    data: WorkflowCardData
+    included: list[Any] = []
+
+
+def parse_any_pcp_payload(raw: dict) -> tuple[str, BaseModel]:
+    """Try all known PCP payload formats. Returns (format_name, parsed_model)."""
+    if isinstance(raw.get("data"), list):
+        return "LegacyWebhookEvent", LegacyWebhookEvent.model_validate(raw)
+    if raw.get("data", {}).get("type") == "WorkflowCard":
+        return "WorkflowCompleteResponse", WorkflowCompleteResponse.model_validate(raw)
+    raise ValidationError.from_exception_data(
+        title="parse_any_pcp_payload",
+        input_type="python",
+        line_errors=[],
+    )
+
+
+# ── 2. PCP API person response ─────────────────────────────────────────────
+# Fetched via GET /people/v2/people/{id}?include=emails,field_data
+# Structure: { "data": {Person}, "included": [Email, ..., FieldDatum, ...] }
+
+class PcpPersonAttrs(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+
+class PcpPersonData(BaseModel):
+    type: Literal["Person"]
+    id: str
+    attributes: PcpPersonAttrs
+
+class PcpEmailAttrs(BaseModel):
+    address: Optional[str] = None
+    primary: bool = False
+
+class PcpEmail(BaseModel):
+    type: Literal["Email"]
+    attributes: PcpEmailAttrs
+
+class PcpFieldDatumAttrs(BaseModel):
+    value: Optional[str] = None
+
+class PcpFieldDatumRels(BaseModel):
+    field_definition: RelRef = RelRef()
+
+class PcpFieldDatum(BaseModel):
+    type: Literal["FieldDatum"]
+    attributes: PcpFieldDatumAttrs
+    relationships: PcpFieldDatumRels = PcpFieldDatumRels()
+
+class PcpUnknownIncluded(BaseModel):
+    type: str
+    model_config = {"extra": "allow"}
+
+PcpIncluded = Annotated[
+    Union[PcpEmail, PcpFieldDatum, PcpUnknownIncluded],
+    Field(discriminator="type"),
+]
+
+class PcpPersonResponse(BaseModel):
+    data: PcpPersonData
+    included: list[Any] = []
+
+    def to_person_dict(self) -> dict:
+        attrs = self.data.attributes
+        first_name = (attrs.first_name or "").strip().title()
+        last_name  = (attrs.last_name  or "").strip().title()
+
+        email = ""
+        custom_fields: dict[str, str] = {}
+
+        for item in self.included:
+            item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", "")
+
+            if item_type == "Email":
+                item_attrs = item.get("attributes", {}) if isinstance(item, dict) else {}
+                addr = (item_attrs.get("address") or "").strip()
+                if addr:
+                    if not email or item_attrs.get("primary"):
+                        email = addr
+                    if item_attrs.get("primary"):
+                        continue
+
+            elif item_type == "FieldDatum":
+                item_attrs = item.get("attributes", {}) if isinstance(item, dict) else {}
+                rels       = item.get("relationships", {}) if isinstance(item, dict) else {}
+                field_id   = (
+                    rels.get("field_definition", {})
+                        .get("data", {})
+                        .get("id", "")
+                )
+                value = (item_attrs.get("value") or "")
+                if field_id:
+                    custom_fields[str(field_id)] = value
+
+        return {
+            "person_id":     self.data.id,
+            "first_name":    first_name,
+            "last_name":     last_name,
+            "email":         email.lower(),
+            "custom_fields": custom_fields,
+        }
 
 app = Flask(__name__)
 
@@ -95,93 +300,15 @@ def fetch_person_from_pcp(person_id: str) -> dict | None:
         return None
 
 
-def _extract_person_id(webhook_payload: dict) -> str:
-    """
-    Extract the person ID from a PCP webhook payload.
-
-    Actual PCP webhook format:
-        {
-          "data": [{
-            "type": "EventDelivery",
-            "attributes": {
-              "name": "people.v2.events.person.created",
-              "payload": "{\"data\":{\"type\":\"Person\",\"id\":\"12345678\",...}}"
-            }
-          }]
-        }
-
-    The inner payload is a JSON string that must be parsed separately.
-    """
-    try:
-        inner_str = (
-            webhook_payload
-            .get("data", [{}])[0]
-            .get("attributes", {})
-            .get("payload", "{}")
-        )
-        return json.loads(inner_str).get("data", {}).get("id", "")
-    except (json.JSONDecodeError, IndexError):
-        return ""
-
-
 def parse_person(pcp_api_response: dict) -> dict:
     """
-    Extract relevant fields from a PCP API person response.
+    Extract relevant fields from a PCP API person response using Pydantic.
     The response must have been fetched with ?include=emails,field_data.
 
     Returns a flat dict:
-        person_id    (str)
-        first_name   (str, title-cased)
-        last_name    (str, title-cased)
-        email        (str, lowercase, empty string if none)
-        custom_fields (dict mapping field_definition_id → value)
+        person_id, first_name, last_name, email, custom_fields
     """
-    data     = pcp_api_response.get("data", {})
-    attrs    = data.get("attributes", {})
-    included = pcp_api_response.get("included", [])
-
-    person_id  = data.get("id", "")
-    first_name = attrs.get("first_name", "") or ""
-    last_name  = attrs.get("last_name",  "") or ""
-
-    # Find primary email from included Email resources
-    email = ""
-    for item in included:
-        if item.get("type") != "Email":
-            continue
-        item_attrs = item.get("attributes", {})
-        addr = item_attrs.get("address", "").strip()
-        if not addr:
-            continue
-        # Accept first found; prefer primary
-        if not email or item_attrs.get("primary"):
-            email = addr
-        if item_attrs.get("primary"):
-            break
-
-    # Build custom_fields dict: field_definition_id → value
-    # Keys are strings (PCP numeric IDs as strings)
-    custom_fields: dict[str, str] = {}
-    for item in included:
-        if item.get("type") != "FieldDatum":
-            continue
-        field_def_id = (
-            item.get("relationships", {})
-                .get("field_definition", {})
-                .get("data", {})
-                .get("id", "")
-        )
-        value = item.get("attributes", {}).get("value", "") or ""
-        if field_def_id:
-            custom_fields[str(field_def_id)] = value
-
-    return {
-        "person_id":     person_id,
-        "first_name":    first_name.strip().title(),
-        "last_name":     last_name.strip().title(),
-        "email":         email.lower(),
-        "custom_fields": custom_fields,
-    }
+    return PcpPersonResponse.model_validate(pcp_api_response).to_person_dict()
 
 
 # ─── Rule matching ────────────────────────────────────────────────────────────
@@ -385,20 +512,19 @@ def webhook():
     if config.LOG_PAYLOADS:
         logger.info(f"Incoming webhook payload: {payload}")
 
-    # ── Validate ─────────────────────────────────────────────────────────────
+    # ── Validate & parse with Pydantic ───────────────────────────────────────
     if not isinstance(payload, dict):
         raw = request.get_data(as_text=True)
         logger.warning(f"Rejected: payload is not a JSON object\nRaw body:\n{raw}")
         return jsonify({"error": "payload must be a JSON object"}), 400
 
     try:
-        event_name = payload["data"][0]["attributes"]["name"]
-    except (KeyError, IndexError, TypeError):
-        event_name = ""
-    if not event_name:
-        logger.warning("Rejected: payload missing event name")
+        event = parse_webhook_payload(payload)
+    except ValidationError as exc:
+        logger.warning(f"Rejected: payload failed Pydantic validation\n{exc}")
         return jsonify({"error": "payload missing event name"}), 400
 
+    event_name = event.event_name
     if event_name != "people.v2.events.person.created":
         global _last_payload
         _last_payload = {"event": event_name, "payload": payload}
@@ -409,7 +535,7 @@ def webhook():
         logger.info("Compact payload (copy): " + json.dumps(payload, default=str))
         return jsonify({"status": "ignored", "event": event_name}), 200
 
-    person_id = _extract_person_id(payload)
+    person_id = event.person_id
     if not person_id:
         logger.warning("Rejected: could not extract person_id from payload")
         return jsonify({"error": "missing person id in payload"}), 400
@@ -482,6 +608,33 @@ def last_payload():
     if _last_payload is None:
         return jsonify({"status": "none"}), 200
     return jsonify(_last_payload), 200
+
+
+@app.route("/parse", methods=["POST"])
+def parse_debug():
+    """TEST_MODE only — parse any known PCP payload and return the Pydantic model_dump.
+    Use from Postman to verify payload parsing without triggering the full webhook flow."""
+    if not config.TEST_MODE:
+        return jsonify({"error": "only available in TEST_MODE"}), 403
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "payload must be a JSON object"}), 400
+
+    try:
+        fmt, parsed = parse_any_pcp_payload(payload)
+        result = {"status": "ok", "format": fmt, "parsed": parsed.model_dump()}
+        if isinstance(parsed, LegacyWebhookEvent):
+            result["event_name"] = parsed.event_name
+            result["person_id"]  = parsed.person_id
+        elif isinstance(parsed, WorkflowCompleteResponse):
+            result["card_id"]    = parsed.data.id
+            result["stage"]      = parsed.data.attributes.stage
+            result["person_id"]  = parsed.data.relationships.person.data.id if parsed.data.relationships.person.data else None
+        return jsonify(result), 200
+    except (ValidationError, Exception) as exc:
+        errors = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
+        return jsonify({"status": "invalid", "errors": errors}), 422
 
 
 # ─── Dev server ───────────────────────────────────────────────────────────────
