@@ -11,6 +11,7 @@ dependencies = [
     "google-cloud-secret-manager>=2.20",
     "loguru>=0.7",
     "python-dotenv>=1.0",
+    "pydantic>=2.0",
     "pandas>=2.0",
     "openpyxl>=3.1",
     "dtale>=3.0",
