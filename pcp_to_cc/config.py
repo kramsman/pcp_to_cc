@@ -34,7 +34,8 @@ PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 # How to find the ID: run python find_pcp_ids.py locally (requires PCP credentials).
 # Then set the env var (e.g. PCP_NEWSLETTER_TRIGGER_FIELD_ID=12345) in .env or set-env-vars.sh.
 PCP_FIELD_IDS = {
-    "newsletter_opt_in": os.environ.get("PCP_NEWSLETTER_TRIGGER_FIELD_ID", ""),  # PCP field definition ID for the newsletter opt-in field
+    "newsletter_opt_in":  os.environ.get("PCP_NEWSLETTER_FIELD_ID", ""),
+    "temp_import_field":  os.environ.get("PCP_TEMP_IMPORT_FIELD_ID", ""),
 }
 
 # ─── Constant Contact API ─────────────────────────────────────────────────────
@@ -55,13 +56,12 @@ CC_API_BASE = "https://api.cc.email/v3"
 # Then set the env var (e.g. PCP_CONNECT_WORKFLOW_ID=730471) in .env.
 
 WORKFLOW_FIELD_RULES = [
-    # Example — uncomment and fill in to activate:
-    # {
-    #     "description": "Added to Connect Workflow → mark as in_workflow",
-    #     "workflow_id": os.environ.get("PCP_CONNECT_WORKFLOW_ID", ""),
-    #     "field_name":  "newsletter_opt_in",   # must be a key in PCP_FIELD_IDS
-    #     "value":       "true",
-    # },
+    {
+        "description": "Added to New Visitor workflow → set TempImportField = Visitor",
+        "workflow_id": os.environ.get("PCP_NEW_VISITOR_WORKFLOW_ID", ""),
+        "field_name":  "temp_import_field",
+        "value":       "Visitor",
+    },
 ]
 
 # ─── CC List Rules ────────────────────────────────────────────────────────────
