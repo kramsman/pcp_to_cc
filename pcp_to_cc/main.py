@@ -66,10 +66,13 @@ class InnerWorkflowCardData(BaseModel):
     id: str
     relationships: InnerWorkflowCardRels = InnerWorkflowCardRels()
 
-InnerData = Annotated[
-    Union[InnerPersonData, InnerWorkflowCardData],
-    Field(discriminator="type"),
-]
+class InnerUnknownData(BaseModel):
+    model_config = {"extra": "allow"}
+    type: str
+    id: str = ""
+
+# No discriminator — falls back to InnerUnknownData for any type PCP adds in future
+InnerData = Union[InnerPersonData, InnerWorkflowCardData, InnerUnknownData]
 
 class InnerPayload(BaseModel):
     data: InnerData
