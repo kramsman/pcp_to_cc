@@ -21,7 +21,9 @@ ENV_VARS=(
   # ── PCP field definition IDs ───────────────────────────────────────────────
   # Find by running: python find_pcp_ids.py  (requires PCP credentials in Secret Manager)
   # Can be run in utility pcp_launcher.py
-  "PCP_NEWSLETTER_TRIGGER_FIELD_ID=1039700"
+  "PCP_NEWSLETTER_FIELD_ID=1039700"
+  "PCP_TEMP_IMPORT_FIELD_ID=1041878"
+  "PCP_NEW_VISITOR_WORKFLOW_ID=725397"
 
   # ── Constant Contact list IDs ──────────────────────────────────────────────
   # Find in CC: Contacts → Lists → click a list → UUID is in the URL.

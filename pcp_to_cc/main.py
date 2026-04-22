@@ -280,6 +280,13 @@ app = Flask(__name__)
 
 _last_payload: dict | None = None
 
+
+def _log_json(severity: str, message: str, **fields) -> None:
+    """Write a single-line structured JSON entry to stdout for Cloud Logging."""
+    import sys
+    entry = {"severity": severity, "message": message, **fields}
+    print(json.dumps(entry, default=str), flush=True, file=sys.stdout)
+
 # ─── GCP Secret Manager ───────────────────────────────────────────────────────
 
 _secret_client: secretmanager.SecretManagerServiceClient | None = None
@@ -612,7 +619,7 @@ def webhook():
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
-        logger.info(f"Incoming webhook payload: {payload}")
+        _log_json("INFO", "Incoming webhook payload", payload=payload)
 
     # ── Validate & parse with Pydantic ───────────────────────────────────────
     if not isinstance(payload, dict):
