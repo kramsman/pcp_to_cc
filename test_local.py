@@ -40,6 +40,30 @@ WEBHOOK_PAYLOAD = {
     ]
 }
 
+# ── Sample workflow_card.created payload ──────────────────────────────────────
+# Replace person_id (190947666) and workflow_id (730471) with real values for live testing.
+# The inner payload is a JSON string — same pattern as person.created.
+
+WORKFLOW_CARD_CREATED_PAYLOAD = {
+    "event": "people.v2.events.workflow_card.created",
+    "payload": {
+        "data": [
+            {
+                "id": "d6748dcd-e3b2-48a0-96f8-4850c616f8d6",
+                "type": "EventDelivery",
+                "attributes": {
+                    "name": "people.v2.events.workflow_card.created",
+                    "attempt": 1,
+                    "payload": '{"data":{"type":"WorkflowCard","id":"48257343","attributes":{"stage":"ready"},"relationships":{"person":{"data":{"type":"Person","id":"190947666"}},"workflow":{"data":{"type":"Workflow","id":"730471"}},"assignee":{"data":{"type":"Assignee","id":"190519711"}},"current_step":{"data":{"type":"WorkflowStep","id":"1994220"}}}}}',
+                },
+                "relationships": {
+                    "organization": {"data": {"type": "Organization", "id": "526881"}}
+                },
+            }
+        ]
+    },
+}
+
 IGNORED_EVENT_PAYLOAD = {
     "data": [
         {
@@ -106,4 +130,5 @@ if __name__ == "__main__":
     test_health()
     test_settings()
     post("/webhook", WEBHOOK_PAYLOAD, "Test: person.created webhook")
+    post("/webhook", WORKFLOW_CARD_CREATED_PAYLOAD, "Test: workflow_card.created (should apply workflow field rules)")
     test_bad_payload()

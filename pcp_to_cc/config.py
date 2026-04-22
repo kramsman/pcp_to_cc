@@ -44,6 +44,26 @@ CC_API_BASE = "https://api.cc.email/v3"
 # CC access token is stored in GCP Secret Manager as "CC_ACCESS_TOKEN".
 # Create an app and get credentials at: https://developer.constantcontact.com/
 
+# ─── Workflow Field Rules ─────────────────────────────────────────────────────
+# When a person is added to a PCP workflow, set a custom field on their profile.
+#
+# workflow_id: PCP workflow ID that triggers this rule ("" matches any workflow)
+# field_name:  key in PCP_FIELD_IDS above
+# value:       value to write to that field
+#
+# How to find workflow IDs: run python find_pcp_ids.py locally.
+# Then set the env var (e.g. PCP_CONNECT_WORKFLOW_ID=730471) in .env.
+
+WORKFLOW_FIELD_RULES = [
+    # Example — uncomment and fill in to activate:
+    # {
+    #     "description": "Added to Connect Workflow → mark as in_workflow",
+    #     "workflow_id": os.environ.get("PCP_CONNECT_WORKFLOW_ID", ""),
+    #     "field_name":  "newsletter_opt_in",   # must be a key in PCP_FIELD_IDS
+    #     "value":       "true",
+    # },
+]
+
 # ─── CC List Rules ────────────────────────────────────────────────────────────
 # Controls which PCP profiles get added to which CC lists.
 #

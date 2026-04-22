@@ -57,8 +57,22 @@ class InnerPersonData(BaseModel):
     id: str
     attributes: InnerPersonAttrs
 
+class InnerWorkflowCardRels(BaseModel):
+    person:   RelRef = RelRef()
+    workflow: RelRef = RelRef()
+
+class InnerWorkflowCardData(BaseModel):
+    type: Literal["WorkflowCard"]
+    id: str
+    relationships: InnerWorkflowCardRels = InnerWorkflowCardRels()
+
+InnerData = Annotated[
+    Union[InnerPersonData, InnerWorkflowCardData],
+    Field(discriminator="type"),
+]
+
 class InnerPayload(BaseModel):
-    data: InnerPersonData
+    data: InnerData
 
 class WebhookDeliveryAttrs(BaseModel):
     name: str
@@ -77,6 +91,7 @@ class WebhookDelivery(BaseModel):
     id: str = ""
     attributes: WebhookDeliveryAttrs
 
+# Format: { "data": [EventDelivery] }  — person.created, legacy format
 class LegacyWebhookEvent(BaseModel):
     data: list[WebhookDelivery]
 
@@ -92,9 +107,41 @@ class LegacyWebhookEvent(BaseModel):
     def person_id(self) -> str:
         return self.delivery.attributes.payload.data.id
 
+# Format: { "event": "...", "payload": { "data": [EventDelivery] } }  — workflow events
+class PcpWebhookPayload(BaseModel):
+    data: list[WebhookDelivery]
 
-def parse_webhook_payload(raw: dict) -> LegacyWebhookEvent:
+class PcpWebhookEvent(BaseModel):
+    event: str
+    payload: PcpWebhookPayload
+
+    @property
+    def delivery(self) -> WebhookDelivery:
+        return self.payload.data[0]
+
+    @property
+    def event_name(self) -> str:
+        return self.event
+
+    @property
+    def person_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        return inner.id
+
+    @property
+    def workflow_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
+        return ""
+
+
+def parse_webhook_payload(raw: dict) -> LegacyWebhookEvent | PcpWebhookEvent:
     """Parse incoming PCP webhook dict. Raises ValidationError if malformed."""
+    if "event" in raw:
+        return PcpWebhookEvent.model_validate(raw)
     return LegacyWebhookEvent.model_validate(raw)
 
 
@@ -498,6 +545,58 @@ def add_to_cc(person: dict, list_ids: list[str]) -> bool:
     return False
 
 
+# ─── PCP custom field writer ──────────────────────────────────────────────────
+
+def set_custom_field(person_id: str, field_name: str, value: str) -> bool:
+    """
+    Write a custom field value to a PCP person record (POST if new, PATCH if exists).
+    field_name must be a key in config.PCP_FIELD_IDS.
+    Returns True on success, False on error.
+    """
+    field_def_id = config.PCP_FIELD_IDS.get(field_name, "")
+    if not field_def_id:
+        logger.warning(f"set_custom_field: PCP_FIELD_IDS['{field_name}'] not set — skipping")
+        return False
+
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would set field '{field_name}' (id={field_def_id}) = '{value}' on person {person_id}")
+        return True
+
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    base = config.PCP_API_BASE
+
+    try:
+        # Check for existing FieldDatum for this person + field
+        r = requests.get(f"{base}/people/{person_id}/field_data", auth=auth, timeout=10)
+        r.raise_for_status()
+        existing = next(
+            (fd for fd in r.json().get("data", [])
+             if fd.get("relationships", {}).get("field_definition", {}).get("data", {}).get("id") == str(field_def_id)),
+            None,
+        )
+
+        payload = {"data": {
+            "type": "FieldDatum",
+            "attributes": {"value": value},
+            "relationships": {"field_definition": {"data": {"type": "FieldDefinition", "id": str(field_def_id)}}},
+        }}
+
+        if existing:
+            r = requests.patch(f"{base}/field_data/{existing['id']}", json=payload, auth=auth, timeout=10)
+        else:
+            r = requests.post(f"{base}/people/{person_id}/field_data", json=payload, auth=auth, timeout=10)
+
+        r.raise_for_status()
+        logger.info(f"PCP field '{field_name}' set to '{value}' for person {person_id}")
+        return True
+
+    except requests.RequestException as e:
+        logger.error(f"set_custom_field failed for person {person_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"PCP API error body: {e.response.text}")
+        return False
+
+
 # ─── Flask routes ─────────────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -525,6 +624,28 @@ def webhook():
         return jsonify({"error": "payload missing event name"}), 400
 
     event_name = event.event_name
+
+    # ── Workflow card created — set custom fields ─────────────────────────────
+    if event_name == "people.v2.events.workflow_card.created":
+        person_id   = event.person_id
+        workflow_id = event.workflow_id if hasattr(event, "workflow_id") else ""
+        if not person_id:
+            logger.warning("Rejected: workflow_card.created missing person_id")
+            return jsonify({"error": "missing person_id in workflow payload"}), 400
+
+        logger.info(f"Processing workflow_card.created  person_id={person_id}  workflow_id={workflow_id}")
+        matched = False
+        for rule in config.WORKFLOW_FIELD_RULES:
+            if rule["workflow_id"] and rule["workflow_id"] != workflow_id:
+                continue
+            matched = True
+            set_custom_field(person_id, rule["field_name"], rule["value"])
+            logger.info(f"Workflow rule applied: '{rule['description']}'")
+
+        if not matched:
+            logger.info(f"No workflow field rules matched workflow_id={workflow_id}")
+        return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
+
     if event_name != "people.v2.events.person.created":
         global _last_payload
         _last_payload = {"event": event_name, "payload": payload}
@@ -543,11 +664,21 @@ def webhook():
     logger.info(f"Processing person.created  person_id={person_id}")
 
     # ── Fetch full person from PCP ────────────────────────────────────────────
-    pcp_data = fetch_person_from_pcp(person_id)
-    if pcp_data is None:
-        return jsonify({"error": "failed to fetch person from PCP API"}), 502
-
-    person = parse_person(pcp_data)
+    if config.TEST_MODE:
+        inner = event.delivery.attributes.payload.data
+        person = {
+            "person_id":     person_id,
+            "first_name":    (getattr(getattr(inner, "attributes", None), "first_name", "") or "").strip().title(),
+            "last_name":     (getattr(getattr(inner, "attributes", None), "last_name",  "") or "").strip().title(),
+            "email":         "test@example.com",
+            "custom_fields": {},
+        }
+        logger.info(f"TEST_MODE — using mock person data (no PCP API call)")
+    else:
+        pcp_data = fetch_person_from_pcp(person_id)
+        if pcp_data is None:
+            return jsonify({"error": "failed to fetch person from PCP API"}), 502
+        person = parse_person(pcp_data)
     name_display = f"{person['first_name']} {person['last_name']}".strip() or f"person_id={person_id}"
     logger.info(f"Parsed: {name_display}  email={'(none)' if not person['email'] else '(set)'}")
 
