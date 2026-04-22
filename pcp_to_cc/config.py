@@ -29,14 +29,8 @@ PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 # Create a Personal Access Token at: https://api.planningcenteronline.com/oauth/applications
 # Store the Application ID and Secret as secrets named "PCP_APP_ID" and "PCP_SECRET".
 
-# PCP custom field definition IDs.
-# Each custom field in PCP has a numeric ID you set once here.
-# How to find the ID: run python find_pcp_ids.py locally (requires PCP credentials).
-# Then set the env var (e.g. PCP_NEWSLETTER_TRIGGER_FIELD_ID=12345) in .env or set-env-vars.sh.
-PCP_FIELD_IDS = {
-    "newsletter_opt_in":  os.environ.get("PCP_NEWSLETTER_FIELD_ID", ""),
-    "temp_import_field":  os.environ.get("PCP_TEMP_IMPORT_FIELD_ID", ""),
-}
+# PCP custom field definition IDs are hardcoded directly in CC_LIST_RULES and
+# WORKFLOW_FIELD_RULES below. Find IDs by running find_pcp_ids.py locally.
 
 # ─── Constant Contact API ─────────────────────────────────────────────────────
 
@@ -46,20 +40,20 @@ CC_API_BASE = "https://api.cc.email/v3"
 # Create an app and get credentials at: https://developer.constantcontact.com/
 
 # ─── Workflow Field Rules ─────────────────────────────────────────────────────
-# When a person is added to a PCP workflow, set a custom field on their profile.
+# When a workflow card event fires, set a custom field on the person's profile.
 #
-# workflow_id: PCP workflow ID that triggers this rule ("" matches any workflow)
-# field_name:  key in PCP_FIELD_IDS above
-# value:       value to write to that field
-#
-# How to find workflow IDs: run python find_pcp_ids.py locally.
-# Then set the env var (e.g. PCP_CONNECT_WORKFLOW_ID=730471) in .env.
+# workflow_id: PCP workflow ID ("" matches any workflow) — from find_pcp_ids.py
+# field_id:    PCP field definition ID — from find_pcp_ids.py
+# trigger:     "created"   = person added to workflow (workflow_card.created)
+# destroyed:   "completed" = workflow card marked complete (workflow_card.updated, stage=completed)
+# value:       value to write to the field
 
 WORKFLOW_FIELD_RULES = [
     {
-        "description": "Added to New Visitor workflow → set TempImportField = Visitor",
-        "workflow_id": os.environ.get("PCP_NEW_VISITOR_WORKFLOW_ID", ""),
-        "field_name":  "temp_import_field",
+        "description": "Enter New Visitor workflow → set TempImportField = Visitor",
+        "workflow_id": "725397",
+        "field_id":    "1041878",
+        "trigger":     "created",
         "value":       "Visitor",
     },
 ]
@@ -83,10 +77,10 @@ WORKFLOW_FIELD_RULES = [
 
 CC_LIST_RULES = [
     {
-        "description": "Newsletter opt-in → newsletter list",
-        "pcp_field":   "newsletter_opt_in",
-        "pcp_value":   "true",
-        "cc_lists":    [os.environ.get("CC_NEWSLETTER_LIST_ID", "")],
+        "description":  "Newsletter opt-in → newsletter list",
+        "pcp_field_id": "1039700",
+        "pcp_value":    "true",
+        "cc_lists":     [os.environ.get("CC_NEWSLETTER_LIST_ID", "")],
     },
     # Example of a second rule — uncomment and fill in to activate:
     # {
@@ -105,9 +99,6 @@ PORT = int(os.environ.get("PORT", "8080"))  # Cloud Run sets this automatically
 # Warn (not error) about missing IDs since they are discovered after first deploy.
 
 if not TEST_MODE:
-    for name, field_id in PCP_FIELD_IDS.items():
-        if not field_id:
-            logger.warning(f"PCP_FIELD_IDS['{name}'] is not set — rules using this field will never match (set LOG_PAYLOADS=true to discover the field ID)")
     for rule in CC_LIST_RULES:
         if not any(rule["cc_lists"]):
             logger.warning(f"CC list ID empty in rule '{rule['description']}' — set the corresponding env var")

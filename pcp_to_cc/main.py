@@ -61,10 +61,23 @@ class InnerWorkflowCardRels(BaseModel):
     person:   RelRef = RelRef()
     workflow: RelRef = RelRef()
 
+class InnerWorkflowCardAttrs(BaseModel):
+    stage: Optional[str] = None
+
 class InnerWorkflowCardData(BaseModel):
     type: Literal["WorkflowCard"]
     id: str
+    attributes: InnerWorkflowCardAttrs = InnerWorkflowCardAttrs()
     relationships: InnerWorkflowCardRels = InnerWorkflowCardRels()
+
+class InnerWorkflowCardActivityAttrs(BaseModel):
+    comment: Optional[str] = None
+    type: Optional[str] = None
+
+class InnerWorkflowCardActivityData(BaseModel):
+    type: Literal["WorkflowCardActivity"]
+    id: str
+    attributes: InnerWorkflowCardActivityAttrs = InnerWorkflowCardActivityAttrs()
 
 class InnerUnknownData(BaseModel):
     model_config = {"extra": "allow"}
@@ -72,7 +85,7 @@ class InnerUnknownData(BaseModel):
     id: str = ""
 
 # No discriminator — falls back to InnerUnknownData for any type PCP adds in future
-InnerData = Union[InnerPersonData, InnerWorkflowCardData, InnerUnknownData]
+InnerData = Union[InnerPersonData, InnerWorkflowCardData, InnerWorkflowCardActivityData, InnerUnknownData]
 
 class InnerPayload(BaseModel):
     data: InnerData
@@ -120,6 +133,20 @@ class LegacyWebhookEvent(BaseModel):
             return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
         return ""
 
+    @property
+    def stage(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.attributes.stage or ""
+        return ""
+
+    @property
+    def comment(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardActivityData):
+            return inner.attributes.comment or ""
+        return ""
+
 # Format: { "event": "...", "payload": { "data": [EventDelivery] } }  — workflow events
 class PcpWebhookPayload(BaseModel):
     data: list[WebhookDelivery]
@@ -148,6 +175,20 @@ class PcpWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, InnerWorkflowCardData):
             return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
+        return ""
+
+    @property
+    def stage(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.attributes.stage or ""
+        return ""
+
+    @property
+    def comment(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardActivityData):
+            return inner.attributes.comment or ""
         return ""
 
 
@@ -394,13 +435,7 @@ def apply_rules(person: dict) -> list[str]:
     custom_fields = person.get("custom_fields", {})
 
     for rule in config.CC_LIST_RULES:
-        field_name = rule["pcp_field"]
-        field_id   = config.PCP_FIELD_IDS.get(field_name, "")
-
-        if not field_id:
-            logger.warning(f"Rule '{rule['description']}': PCP_FIELD_IDS['{field_name}'] not set — skipping")
-            continue
-
+        field_id     = rule["pcp_field_id"]
         actual_value = custom_fields.get(str(field_id), "")
         if actual_value == rule["pcp_value"]:
             valid_list_ids = [lid for lid in rule["cc_lists"] if lid]
@@ -568,19 +603,18 @@ def add_to_cc(person: dict, list_ids: list[str]) -> bool:
 
 # ─── PCP custom field writer ──────────────────────────────────────────────────
 
-def set_custom_field(person_id: str, field_name: str, value: str) -> bool:
+def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
     """
     Write a custom field value to a PCP person record (POST if new, PATCH if exists).
-    field_name must be a key in config.PCP_FIELD_IDS.
+    field_def_id is the numeric PCP field definition ID.
     Returns True on success, False on error.
     """
-    field_def_id = config.PCP_FIELD_IDS.get(field_name, "")
     if not field_def_id:
-        logger.warning(f"set_custom_field: PCP_FIELD_IDS['{field_name}'] not set — skipping")
+        logger.warning(f"set_custom_field: field_def_id is empty — skipping")
         return False
 
     if config.TEST_MODE:
-        logger.info(f"TEST_MODE — would set field '{field_name}' (id={field_def_id}) = '{value}' on person {person_id}")
+        logger.info(f"TEST_MODE — would set field id={field_def_id} = '{value}' on person {person_id}")
         return True
 
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
@@ -650,26 +684,33 @@ def webhook():
     event_name = event.event_name
     global _payloads
 
-    # ── Workflow card created — set custom fields ─────────────────────────────
-    if event_name == "people.v2.events.workflow_card.created":
+    # ── Workflow card events — set custom fields ──────────────────────────────
+    _WORKFLOW_CARD_EVENTS = {
+        "people.v2.events.workflow_card.created",
+        "people.v2.events.workflow_card.updated",
+    }
+    if event_name in _WORKFLOW_CARD_EVENTS:
         _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
-        person_id = event.person_id
+        trigger     = "completed" if event.stage == "completed" else "created"
+        person_id   = event.person_id
         workflow_id = event.workflow_id
         if not person_id:
-            logger.warning("Rejected: workflow_card.created missing person_id")
+            logger.warning(f"Rejected: {event_name} missing person_id")
             return jsonify({"error": "missing person_id in workflow payload"}), 400
 
-        logger.info(f"Processing workflow_card.created  person_id={person_id}  workflow_id={workflow_id}")
+        logger.info(f"Processing {event_name}  trigger={trigger}  person_id={person_id}  workflow_id={workflow_id}")
         matched = False
         for rule in config.WORKFLOW_FIELD_RULES:
             if rule["workflow_id"] and rule["workflow_id"] != workflow_id:
                 continue
+            if rule["trigger"] != trigger:
+                continue
             matched = True
-            set_custom_field(person_id, rule["field_name"], rule["value"])
+            set_custom_field(person_id, rule["field_id"], rule["value"])
             logger.info(f"Workflow rule applied: '{rule['description']}'")
 
         if not matched:
-            logger.info(f"No workflow field rules matched workflow_id={workflow_id}")
+            logger.info(f"No workflow field rules matched workflow_id={workflow_id} trigger={trigger}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     if event_name != "people.v2.events.person.created":
