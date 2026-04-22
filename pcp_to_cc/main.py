@@ -108,7 +108,17 @@ class LegacyWebhookEvent(BaseModel):
 
     @property
     def person_id(self) -> str:
-        return self.delivery.attributes.payload.data.id
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        return inner.id
+
+    @property
+    def workflow_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, InnerWorkflowCardData):
+            return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
+        return ""
 
 # Format: { "event": "...", "payload": { "data": [EventDelivery] } }  — workflow events
 class PcpWebhookPayload(BaseModel):
@@ -278,7 +288,8 @@ class PcpPersonResponse(BaseModel):
 
 app = Flask(__name__)
 
-_last_payload: dict | None = None
+_payloads: list[dict] = []
+_MAX_PAYLOADS = 20
 
 
 def _log_json(severity: str, message: str, **fields) -> None:
@@ -348,7 +359,7 @@ def fetch_person_from_pcp(person_id: str) -> dict | None:
         resp.raise_for_status()
         data = resp.json()
         if config.LOG_PAYLOADS:
-            logger.info(f"PCP API response for person_id={person_id}: {data}")
+            _log_json("INFO", "PCP API person response", person_id=person_id, data=data)
         return data
     except requests.RequestException as e:
         logger.error(f"PCP API fetch failed for person_id={person_id}: {e}")
@@ -592,12 +603,14 @@ def set_custom_field(person_id: str, field_name: str, value: str) -> bool:
         }}
 
         if existing:
+            logger.info(f"set_custom_field: PATCH existing FieldDatum {existing['id']} → '{value}'")
             r = requests.patch(f"{base}/field_data/{existing['id']}", json=payload, auth=auth, timeout=10)
         else:
+            logger.info(f"set_custom_field: POST new FieldDatum for person {person_id} field_def {field_def_id} → '{value}'")
             r = requests.post(f"{base}/people/{person_id}/field_data", json=payload, auth=auth, timeout=10)
 
         r.raise_for_status()
-        logger.info(f"PCP field '{field_name}' set to '{value}' for person {person_id}")
+        logger.info(f"set_custom_field: success — '{field_name}' = '{value}' on person {person_id}  HTTP {r.status_code}")
         return True
 
     except requests.RequestException as e:
@@ -619,7 +632,8 @@ def webhook():
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
-        _log_json("INFO", "Incoming webhook payload", payload=payload)
+        import sys
+        print(json.dumps(payload, default=str), flush=True, file=sys.stdout)
 
     # ── Validate & parse with Pydantic ───────────────────────────────────────
     if not isinstance(payload, dict):
@@ -634,11 +648,13 @@ def webhook():
         return jsonify({"error": "payload missing event name"}), 400
 
     event_name = event.event_name
+    global _payloads
 
     # ── Workflow card created — set custom fields ─────────────────────────────
     if event_name == "people.v2.events.workflow_card.created":
-        person_id   = event.person_id
-        workflow_id = event.workflow_id if hasattr(event, "workflow_id") else ""
+        _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
+        person_id = event.person_id
+        workflow_id = event.workflow_id
         if not person_id:
             logger.warning("Rejected: workflow_card.created missing person_id")
             return jsonify({"error": "missing person_id in workflow payload"}), 400
@@ -657,13 +673,8 @@ def webhook():
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     if event_name != "people.v2.events.person.created":
-        global _last_payload
-        _last_payload = {"event": event_name, "payload": payload}
-        logger.info(
-            f"Ignored event: {event_name!r}\nPayload:\n"
-            + json.dumps(payload, indent=2, default=str)
-        )
-        logger.info("Compact payload (copy): " + json.dumps(payload, default=str))
+        _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
+        _log_json("INFO", f"Ignored event: {event_name}", event=event_name)
         return jsonify({"status": "ignored", "event": event_name}), 200
 
     person_id = event.person_id
@@ -745,10 +756,18 @@ def settings():
 
 @app.route("/payload", methods=["GET"])
 def last_payload():
-    """Return the most recent unrecognized webhook payload as clean JSON."""
-    if _last_payload is None:
-        return jsonify({"status": "none"}), 200
-    return jsonify(_last_payload), 200
+    """Return captured unrecognized webhook payloads (newest first, max 20)."""
+    if not _payloads:
+        return jsonify({"status": "none", "count": 0, "payloads": []}), 200
+    return jsonify({"count": len(_payloads), "payloads": _payloads}), 200
+
+
+@app.route("/payload/clear", methods=["POST"])
+def clear_payloads():
+    """Clear captured payloads."""
+    global _payloads
+    _payloads = []
+    return jsonify({"status": "cleared"}), 200
 
 
 @app.route("/parse", methods=["POST"])
@@ -767,11 +786,11 @@ def parse_debug():
         result = {"status": "ok", "format": fmt, "parsed": parsed.model_dump()}
         if isinstance(parsed, LegacyWebhookEvent):
             result["event_name"] = parsed.event_name
-            result["person_id"]  = parsed.person_id
+            result["person_id"] = parsed.person_id
         elif isinstance(parsed, WorkflowCompleteResponse):
-            result["card_id"]    = parsed.data.id
-            result["stage"]      = parsed.data.attributes.stage
-            result["person_id"]  = parsed.data.relationships.person.data.id if parsed.data.relationships.person.data else None
+            result["card_id"] = parsed.data.id
+            result["stage"] = parsed.data.attributes.stage
+            result["person_id"] = parsed.data.relationships.person.data.id if parsed.data.relationships.person.data else None
         return jsonify(result), 200
     except (ValidationError, Exception) as exc:
         errors = exc.errors() if isinstance(exc, ValidationError) else [{"msg": str(exc)}]
