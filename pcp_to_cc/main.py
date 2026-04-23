@@ -644,7 +644,7 @@ def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
             r = requests.post(f"{base}/people/{person_id}/field_data", json=payload, auth=auth, timeout=10)
 
         r.raise_for_status()
-        logger.info(f"set_custom_field: success — '{field_name}' = '{value}' on person {person_id}  HTTP {r.status_code}")
+        logger.info(f"set_custom_field: success — field_id={field_def_id} = '{value}' on person {person_id}  HTTP {r.status_code}")
         return True
 
     except requests.RequestException as e:
@@ -683,6 +683,7 @@ def webhook():
 
     event_name = event.event_name
     global _payloads
+    _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
 
     # ── Workflow card events — set custom fields ──────────────────────────────
     _WORKFLOW_CARD_EVENTS = {
@@ -690,7 +691,6 @@ def webhook():
         "people.v2.events.workflow_card.updated",
     }
     if event_name in _WORKFLOW_CARD_EVENTS:
-        _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
         trigger     = "completed" if event.stage == "completed" else "created"
         person_id   = event.person_id
         workflow_id = event.workflow_id
@@ -714,7 +714,6 @@ def webhook():
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     if event_name != "people.v2.events.person.created":
-        _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
         _log_json("INFO", f"Ignored event: {event_name}", event=event_name)
         return jsonify({"status": "ignored", "event": event_name}), 200
 
@@ -777,11 +776,10 @@ def settings():
     """Echo current configuration — useful for diagnosing Cloud Run env var issues."""
     rules_summary = [
         {
-            "description": r["description"],
-            "pcp_field":   r["pcp_field"],
-            "pcp_value":   r["pcp_value"],
-            "cc_lists":    r["cc_lists"],
-            "field_id":    config.PCP_FIELD_IDS.get(r["pcp_field"], "(not set)"),
+            "description":  r["description"],
+            "pcp_field_id": r["pcp_field_id"],
+            "pcp_value":    r["pcp_value"],
+            "cc_lists":     r["cc_lists"],
         }
         for r in config.CC_LIST_RULES
     ]
@@ -801,6 +799,14 @@ def last_payload():
     if not _payloads:
         return jsonify({"status": "none", "count": 0, "payloads": []}), 200
     return jsonify({"count": len(_payloads), "payloads": _payloads}), 200
+
+
+@app.route("/payload/<int:index>", methods=["GET"])
+def get_payload(index: int):
+    """Return raw webhook body at position index (0=newest). Ready to paste into Postman."""
+    if index >= len(_payloads):
+        return jsonify({"error": "index out of range", "count": len(_payloads)}), 404
+    return jsonify(_payloads[index]["payload"]), 200
 
 
 @app.route("/payload/clear", methods=["POST"])

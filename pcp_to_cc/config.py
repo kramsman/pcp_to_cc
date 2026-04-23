@@ -56,6 +56,13 @@ WORKFLOW_FIELD_RULES = [
         "trigger":     "created",
         "value":       "Visitor",
     },
+    {
+        "description": "Enter Explorer workflow → set TempImportField = Explorer",
+        "workflow_id": "731975",
+        "field_id": "1041878",
+        "trigger": "created",
+        "value": "Explorer",
+    },
 ]
 
 # ─── CC List Rules ────────────────────────────────────────────────────────────

@@ -16,7 +16,7 @@ _PAYLOADS = os.path.join(os.path.dirname(__file__), "payloads")
 
 PCP_PAYLOAD_FILES = {
     "workflow_complete  (direct REST response)": os.path.join(_PAYLOADS, "PCP", "workflow_complete.json"),
-    "create_flow_card   (webhook with event field)": os.path.join(_PAYLOADS, "PCP", "create_flow_card.json"),
+    "create_flow_card   (webhook with event field)": os.path.join(_PAYLOADS, "PCP", "WFcard_created.json"),
     "person_created     (legacy webhook, no event field)": os.path.join(_PAYLOADS, "person_created_webhook.json"),
 }
 
@@ -142,7 +142,7 @@ class WorkflowCompleteResponse(BaseModel):
     included: list[Any] = []
 
 
-# ── Format B: Webhook with "event" field (create_flow_card.json) ──────────
+# ── Format B: Webhook with "event" field (WFcard_created.json) ──────────
 
 class PcpWebhookPayload(BaseModel):
     data: list[EventDelivery]
