@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",
     "dtale>=3.0",
+    "bekgoogle",
 ]
 
 [tool.uv]
@@ -22,6 +23,9 @@ dev-dependencies = [
     "pytest>=8.0",
     "pytest-dotenv>=0.5",
 ]
+
+[tool.uv.sources]
+bekgoogle = { git = "https://github.com/kramsman/bekgoogle.git" }
 
 [tool.pytest.ini_options]
 markers = [

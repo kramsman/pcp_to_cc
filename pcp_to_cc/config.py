@@ -108,6 +108,22 @@ WORKFLOW_FIELD_RULES = [
     },
 ]
 
+# ─── Workflow Chain Rules ─────────────────────────────────────────────────────
+# When a workflow card event fires, automatically add the person to another workflow.
+#
+# workflow_id:        source workflow ID — must match the completed workflow
+# trigger:            "completed" = workflow card marked complete
+# add_to_workflow_id: destination workflow to enroll the person in
+
+WORKFLOW_CHAIN_RULES = [
+    {
+        "description":        "Complete Member in Proc → add to Ceremony workflow",
+        "workflow_id":        "731457",
+        "trigger":            "completed",
+        "add_to_workflow_id": "730471",
+    },
+]
+
 # ─── CC List Rules ────────────────────────────────────────────────────────────
 # Controls which PCP profiles get added to which CC lists.
 #

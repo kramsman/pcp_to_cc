@@ -15,7 +15,8 @@
       "Bash(ls pcp_*.csv)",
       "Bash(ls *.csv)",
       "Bash(/Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/.venv/bin/python -c \"import main\")",
-      "Bash(uv pip *)"
+      "Bash(uv pip *)",
+      "Bash(git *)"
     ]
   }
 }

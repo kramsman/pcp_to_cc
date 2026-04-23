@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
 import requests
+from bekgoogle import ensure_adc_auth
 from flask import Flask, jsonify, request
 from google.cloud import secretmanager
 from loguru import logger
@@ -702,6 +703,26 @@ def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
         return False
 
 
+def add_to_workflow(person_id: str, workflow_id: str) -> bool:
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would add person {person_id} to workflow {workflow_id}")
+        return True
+    try:
+        auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+        url  = f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards"
+        body = {"data": {"type": "WorkflowCard",
+                         "relationships": {"person": {"data": {"type": "Person", "id": person_id}}}}}
+        r = requests.post(url, json=body, auth=auth, timeout=10)
+        r.raise_for_status()
+        logger.info(f"add_to_workflow: added person {person_id} to workflow {workflow_id}  HTTP {r.status_code}")
+        return True
+    except requests.RequestException as e:
+        logger.error(f"add_to_workflow failed person {person_id} workflow {workflow_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"PCP API error body: {e.response.text}")
+        return False
+
+
 # ─── Flask routes ─────────────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -754,10 +775,19 @@ def webhook():
                 continue
             matched = True
             set_custom_field(person_id, rule["field_id"], rule["value"])
-            logger.info(f"Workflow rule applied: '{rule['description']}'")
+            logger.info(f"Workflow field rule applied: '{rule['description']}'")
+
+        for rule in config.WORKFLOW_CHAIN_RULES:
+            if rule["workflow_id"] and rule["workflow_id"] != workflow_id:
+                continue
+            if rule["trigger"] != trigger:
+                continue
+            matched = True
+            add_to_workflow(person_id, rule["add_to_workflow_id"])
+            logger.info(f"Workflow chain rule applied: '{rule['description']}'")
 
         if not matched:
-            logger.info(f"No workflow field rules matched workflow_id={workflow_id} trigger={trigger}")
+            logger.info(f"No workflow rules matched workflow_id={workflow_id} trigger={trigger}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     if event_name != "people.v2.events.person.created":
@@ -901,4 +931,6 @@ def parse_debug():
 # ─── Dev server ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    if not config.TEST_MODE:
+        ensure_adc_auth()
     app.run(host="0.0.0.0", port=config.PORT, debug=True)
