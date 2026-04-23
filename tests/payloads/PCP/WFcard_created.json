@@ -1,68 +1,65 @@
 {
-    "event": "people.v2.events.workflow_card_activity.created",
-    "payload": {
-        "data": [
-            {
-                "attributes": {
-                    "attempt": 2,
-                    "name": "people.v2.events.workflow_card_activity.created",
-                    "payload": {
-                        "data": {
-                            "attributes": {
-                                "attachments_meta": [],
-                                "attachments_urls": [],
-                                "automation_url": null,
-                                "comment": "created this card",
-                                "content": null,
-                                "content_is_html": false,
-                                "created_at": "2026-04-22T02:57:48Z",
-                                "form_submission_url": null,
-                                "person_avatar_url": "https://avatars.planningcenteronline.com/uploads/initials/OO.png?g=68x68%23",
-                                "person_name": "office2at4thu.org office2at4thu.org",
-                                "reassigned_to_avatar_url": null,
-                                "reassigned_to_name": null,
-                                "subject": null,
-                                "type": "creation"
-                            },
-                            "id": "433852208",
-                            "links": {
-                                "self": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48335494/activities/433852208"
-                            },
-                            "relationships": {
-                                "workflow_card": {
-                                    "data": {
-                                        "id": "48335494",
-                                        "type": "WorkflowCard"
-                                    }
-                                },
-                                "workflow_step": {
-                                    "data": null
-                                }
-                            },
-                            "type": "WorkflowCardActivity"
-                        },
-                        "included": [],
-                        "meta": {
-                            "event_time": "2026-04-22T02:57:49Z",
-                            "idempotency_token": "019db31f-5808-725b-a969-ed5e6efedb12",
-                            "parent": {
-                                "id": "48335494",
-                                "type": "WorkflowCard"
-                            }
-                        }
-                    }
-                },
-                "id": "c057f0e4-edde-41ac-a6ae-8a1314d853cf",
-                "relationships": {
-                    "organization": {
-                        "data": {
-                            "id": "526881",
-                            "type": "Organization"
-                        }
-                    }
-                },
-                "type": "EventDelivery"
+  "data": [
+    {
+      "id": "d34e083a-803e-4a66-a80b-2255bcc0c5a9",
+      "type": "EventDelivery",
+      "attributes": {
+        "name": "people.v2.events.workflow_card_activity.created",
+        "attempt": 1,
+        "payload": {
+          "data": {
+            "type": "WorkflowCardActivity",
+            "id": "434295212",
+            "attributes": {
+              "attachments_meta": [],
+              "attachments_urls": [],
+              "automation_url": null,
+              "comment": "completed this card",
+              "content": null,
+              "content_is_html": false,
+              "created_at": "2026-04-23T15:20:01Z",
+              "form_submission_url": null,
+              "person_avatar_url": "https://avatars.planningcenteronline.com/uploads/initials/OO.png?g=68x68%23",
+              "person_name": "office2at4thu.org office2at4thu.org",
+              "reassigned_to_avatar_url": null,
+              "reassigned_to_name": null,
+              "subject": null,
+              "type": "card_complete"
+            },
+            "relationships": {
+              "workflow_card": {
+                "data": {
+                  "type": "WorkflowCard",
+                  "id": "48343515"
+                }
+              },
+              "workflow_step": {
+                "data": null
+              }
+            },
+            "links": {
+              "self": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/activities/434295212"
             }
-        ]
+          },
+          "included": [],
+          "meta": {
+            "parent": {
+              "id": "48343515",
+              "type": "WorkflowCard"
+            },
+            "event_time": "2026-04-23T15:20:02Z",
+            "idempotency_token": "019dbaed-38e0-7a14-a278-84ec707e5754"
+          }
+        }
+      },
+      "relationships": {
+        "organization": {
+          "data": {
+            "type": "Organization",
+            "id": "526881"
+          }
+        }
+      }
     }
+  ]
 }

@@ -32,6 +32,34 @@ PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 # PCP custom field definition IDs are hardcoded directly in CC_LIST_RULES and
 # WORKFLOW_FIELD_RULES below. Find IDs by running find_pcp_ids.py locally.
 
+# ─── PCP payload types — pushed vs polled ─────────────────────────────────────
+#
+# PUSHED (use these — PCP sends them automatically to /webhook):
+#   {"data": [{"type": "EventDelivery", "attributes": {"name": "...", "payload": "..."}}]}
+#   The "name" field identifies the event. The "payload" field is an escaped JSON string
+#   containing the actual data. Examples seen in logs:
+#     people.v2.events.workflow_card.created       — person added to a workflow
+#     people.v2.events.workflow_card.updated        — card moved to next step / completed
+#     people.v2.events.workflow_card_activity.created — step completed, comment added, etc.
+#       → check attributes.type inside payload: "card_complete" = whole workflow done
+#     people.v2.events.workflow_step.updated        — step definition changed (not person-specific)
+#     people.v2.events.person.created               — new person record created
+#
+# POLLED (not used here — requires your code to make a GET request):
+#   {"data": {"type": "WorkflowCard", ...}}   single object, no EventDelivery wrapper
+#   Only needed if you need data not included in the pushed payload.
+#
+# ─── Adding a new Pydantic model ──────────────────────────────────────────────
+#
+# When PCP sends a new payload type you want to parse:
+#   1. Copy the raw JSON from Cloud Logging (expand the webhook_payload log entry,
+#      copy the "body" field value) into a new file under tests/payloads/PCP/
+#   2. Tell Claude: "add a Pydantic model for this payload" — Claude reads the file,
+#      identifies data.type, creates the model named after that type, and adds it
+#      to the InnerData union in main.py
+#   3. Add a property to LegacyWebhookEvent / PcpWebhookEvent if you need to
+#      surface a specific field from the new type
+
 # ─── Constant Contact API ─────────────────────────────────────────────────────
 
 CC_API_BASE = "https://api.cc.email/v3"
@@ -62,6 +90,20 @@ WORKFLOW_FIELD_RULES = [
         "field_id": "1041878",
         "trigger": "created",
         "value": "Explorer",
+    },
+    {
+        "description": "Enter Member in Process workflow → set TempImportField = Member In Process",
+        "workflow_id": "731457",
+        "field_id": "1041878",
+        "trigger": "created",
+        "value": "Member In Process",
+    },
+    {
+        "description": "Complete Member in Process workflow → set TempImportField = Member",
+        "workflow_id": "731457",
+        "field_id": "1041878",
+        "trigger": "completed",
+        "value": "Member",
     },
 ]
 

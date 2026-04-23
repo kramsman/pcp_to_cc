@@ -71,13 +71,19 @@ class WorkflowCard(BaseModel):
     relationships: WorkflowCardRels = WorkflowCardRels()
 
 class WorkflowCardActivityAttrs(BaseModel):
-    comment: Optional[str] = None
-    type: Optional[str] = None
+    comment:     Optional[str] = None
+    type:        Optional[str] = None
+    person_name: Optional[str] = None
+
+class WorkflowCardActivityRels(BaseModel):
+    workflow_card: RelRef = RelRef()
+    workflow_step: RelRef = RelRef()
 
 class WorkflowCardActivity(BaseModel):
     type: Literal["WorkflowCardActivity"]
     id: str
-    attributes: WorkflowCardActivityAttrs = WorkflowCardActivityAttrs()
+    attributes:    WorkflowCardActivityAttrs = WorkflowCardActivityAttrs()
+    relationships: WorkflowCardActivityRels  = WorkflowCardActivityRels()
 
 class Unknown(BaseModel):
     model_config = {"extra": "allow"}
@@ -147,6 +153,27 @@ class LegacyWebhookEvent(BaseModel):
             return inner.attributes.comment or ""
         return ""
 
+    @property
+    def activity_type(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.attributes.type or ""
+        return ""
+
+    @property
+    def person_name(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.attributes.person_name or ""
+        return ""
+
+    @property
+    def card_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.relationships.workflow_card.data.id if inner.relationships.workflow_card.data else ""
+        return ""
+
 # Format: { "event": "...", "payload": { "data": [EventDelivery] } }  — workflow events
 class PcpWebhookPayload(BaseModel):
     data: list[WebhookDelivery]
@@ -189,6 +216,27 @@ class PcpWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, WorkflowCardActivity):
             return inner.attributes.comment or ""
+        return ""
+
+    @property
+    def activity_type(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.attributes.type or ""
+        return ""
+
+    @property
+    def person_name(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.attributes.person_name or ""
+        return ""
+
+    @property
+    def card_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCardActivity):
+            return inner.relationships.workflow_card.data.id if inner.relationships.workflow_card.data else ""
         return ""
 
 
@@ -713,7 +761,14 @@ def webhook():
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     if event_name != "people.v2.events.person.created":
-        _log_json("INFO", f"Ignored event: {event_name}", event=event_name)
+        extras = {k: v for k, v in {
+            "activity_type": event.activity_type,
+            "person_name":   event.person_name,
+            "card_id":       event.card_id,
+            "comment":       event.comment,
+            "workflow_id":   event.workflow_id,
+        }.items() if v}
+        _log_json("INFO", f"Ignored event: {event_name}", event=event_name, **extras)
         return jsonify({"status": "ignored", "event": event_name}), 200
 
     person_id = event.person_id
