@@ -79,29 +79,30 @@ CC_API_BASE = "https://api.cc.email/v3"
 WORKFLOW_FIELD_RULES = [
     {
         "description": "Enter New Visitor workflow → set TempImportField = Visitor",
-        "workflow_id": "725397",
-        "field_id":    "1041878",
+        "workflow_id": "725397",  # New Visitor
+        # "field_id":    "1041878",  # TempImportField
+        "field_id":    "1038799",  # Member Stage
         "trigger":     "created",
         "value":       "Visitor",
     },
     {
         "description": "Enter Explorer workflow → set TempImportField = Explorer",
-        "workflow_id": "731975",
-        "field_id": "1041878",
+        "workflow_id": "731975",  # Explorer
+        "field_id": "1041878",  # TempImportField
         "trigger": "created",
         "value": "Explorer",
     },
     {
         "description": "Enter Member in Process workflow → set TempImportField = Member In Process",
-        "workflow_id": "731457",
-        "field_id": "1041878",
+        "workflow_id": "731457",  # Member in Process
+        "field_id": "1041878",  # TempImportField
         "trigger": "created",
         "value": "Member In Process",
     },
     {
         "description": "Complete Member in Process workflow → set TempImportField = Member",
-        "workflow_id": "731457",
-        "field_id": "1041878",
+        "workflow_id": "731457",  # Member in Process
+        "field_id": "1041878",  # TempImportField
         "trigger": "completed",
         "value": "Member",
     },
