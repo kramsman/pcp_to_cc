@@ -47,45 +47,45 @@ class RelRef(BaseModel):
 #                           "attributes": { "name": "...", "payload": "<json str>" } } ] }
 # The inner "payload" field is a raw JSON string — model_validator decodes it.
 
-class InnerPersonAttrs(BaseModel):
+class PersonAttrs(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     created_at: Optional[datetime] = None
 
-class InnerPersonData(BaseModel):
+class Person(BaseModel):
     type: Literal["Person"]
     id: str
-    attributes: InnerPersonAttrs
+    attributes: PersonAttrs
 
-class InnerWorkflowCardRels(BaseModel):
+class WorkflowCardRels(BaseModel):
     person:   RelRef = RelRef()
     workflow: RelRef = RelRef()
 
-class InnerWorkflowCardAttrs(BaseModel):
+class WorkflowCardAttrs(BaseModel):
     stage: Optional[str] = None
 
-class InnerWorkflowCardData(BaseModel):
+class WorkflowCard(BaseModel):
     type: Literal["WorkflowCard"]
     id: str
-    attributes: InnerWorkflowCardAttrs = InnerWorkflowCardAttrs()
-    relationships: InnerWorkflowCardRels = InnerWorkflowCardRels()
+    attributes: WorkflowCardAttrs = WorkflowCardAttrs()
+    relationships: WorkflowCardRels = WorkflowCardRels()
 
-class InnerWorkflowCardActivityAttrs(BaseModel):
+class WorkflowCardActivityAttrs(BaseModel):
     comment: Optional[str] = None
     type: Optional[str] = None
 
-class InnerWorkflowCardActivityData(BaseModel):
+class WorkflowCardActivity(BaseModel):
     type: Literal["WorkflowCardActivity"]
     id: str
-    attributes: InnerWorkflowCardActivityAttrs = InnerWorkflowCardActivityAttrs()
+    attributes: WorkflowCardActivityAttrs = WorkflowCardActivityAttrs()
 
-class InnerUnknownData(BaseModel):
+class Unknown(BaseModel):
     model_config = {"extra": "allow"}
     type: str
     id: str = ""
 
-# No discriminator — falls back to InnerUnknownData for any type PCP adds in future
-InnerData = Union[InnerPersonData, InnerWorkflowCardData, InnerWorkflowCardActivityData, InnerUnknownData]
+# No discriminator — falls back to Unknown for any type PCP adds in future
+InnerData = Union[Person, WorkflowCard, WorkflowCardActivity, Unknown]
 
 class InnerPayload(BaseModel):
     data: InnerData
@@ -122,28 +122,28 @@ class LegacyWebhookEvent(BaseModel):
     @property
     def person_id(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
         return inner.id
 
     @property
     def workflow_id(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
         return ""
 
     @property
     def stage(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.attributes.stage or ""
         return ""
 
     @property
     def comment(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardActivityData):
+        if isinstance(inner, WorkflowCardActivity):
             return inner.attributes.comment or ""
         return ""
 
@@ -166,28 +166,28 @@ class PcpWebhookEvent(BaseModel):
     @property
     def person_id(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
         return inner.id
 
     @property
     def workflow_id(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.relationships.workflow.data.id if inner.relationships.workflow.data else ""
         return ""
 
     @property
     def stage(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardData):
+        if isinstance(inner, WorkflowCard):
             return inner.attributes.stage or ""
         return ""
 
     @property
     def comment(self) -> str:
         inner = self.delivery.attributes.payload.data
-        if isinstance(inner, InnerWorkflowCardActivityData):
+        if isinstance(inner, WorkflowCardActivity):
             return inner.attributes.comment or ""
         return ""
 
@@ -203,7 +203,7 @@ def parse_webhook_payload(raw: dict) -> LegacyWebhookEvent | PcpWebhookEvent:
 # Returned by GET /people/v2/workflows/{id}/cards/{id}
 # Structure: { "data": {WorkflowCard}, "included": [], "meta": {} }
 
-class WorkflowCardAttrs(BaseModel):
+class ApiWorkflowCardAttrs(BaseModel):
     stage: str
     completed_at: Optional[datetime] = None
     created_at: datetime
@@ -212,20 +212,20 @@ class WorkflowCardAttrs(BaseModel):
     removed_at: Optional[datetime] = None
     snooze_until: Optional[datetime] = None
 
-class WorkflowCardRels(BaseModel):
+class ApiWorkflowCardRels(BaseModel):
     assignee: RelRef
     person: RelRef
     workflow: RelRef
     current_step: RelRef
 
-class WorkflowCardData(BaseModel):
+class ApiWorkflowCard(BaseModel):
     type: Literal["WorkflowCard"]
     id: str
-    attributes: WorkflowCardAttrs
-    relationships: WorkflowCardRels
+    attributes: ApiWorkflowCardAttrs
+    relationships: ApiWorkflowCardRels
 
 class WorkflowCompleteResponse(BaseModel):
-    data: WorkflowCardData
+    data: ApiWorkflowCard
     included: list[Any] = []
 
 
