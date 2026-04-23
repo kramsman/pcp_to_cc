@@ -118,9 +118,9 @@ WORKFLOW_FIELD_RULES = [
 WORKFLOW_CHAIN_RULES = [
     {
         "description":        "Complete Member in Proc → add to Ceremony workflow",
-        "workflow_id":        "731457",
+        "workflow_id":        "731457",  # Member in Process
         "trigger":            "completed",
-        "add_to_workflow_id": "730471",
+        "add_to_workflow_id": "730471",  # Membership Ceremony
     },
 ]
 
