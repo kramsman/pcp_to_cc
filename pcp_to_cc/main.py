@@ -17,7 +17,6 @@ from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
 import requests
-from bekgoogle import ensure_adc_auth
 from flask import Flask, jsonify, request
 from google.cloud import secretmanager
 from loguru import logger
@@ -930,7 +929,22 @@ def parse_debug():
 
 # ─── Dev server ───────────────────────────────────────────────────────────────
 
+def _ensure_adc_auth() -> None:
+    """Check ADC credentials locally and trigger browser re-auth if expired."""
+    import subprocess
+    import google.auth
+    import google.auth.transport.requests
+    try:
+        creds, _ = google.auth.default()
+        creds.refresh(google.auth.transport.requests.Request())
+    except Exception as e:
+        if not any(k in str(e).lower() for k in ("reauth", "expired", "invalid_grant", "could not be found", "credentials")):
+            return
+        print("\nGoogle credentials have expired. A browser window will open — sign in to continue.\n")
+        subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
+
+
 if __name__ == "__main__":
     if not config.TEST_MODE:
-        ensure_adc_auth()
+        _ensure_adc_auth()
     app.run(host="0.0.0.0", port=config.PORT, debug=True)
