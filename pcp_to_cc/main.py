@@ -666,8 +666,7 @@ def webhook():
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
-        import sys
-        print(json.dumps(payload, default=str), flush=True, file=sys.stdout)
+        _log_json("INFO", "webhook_payload", body=json.dumps(payload, default=str))
 
     # ── Validate & parse with Pydantic ───────────────────────────────────────
     if not isinstance(payload, dict):
