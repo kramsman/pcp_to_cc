@@ -1,54 +1,100 @@
 {
   "data": [
     {
-      "id": "d34e083a-803e-4a66-a80b-2255bcc0c5a9",
+      "id": "af240662-aa39-4ba3-b36a-640446ebd71b",
       "type": "EventDelivery",
       "attributes": {
-        "name": "people.v2.events.workflow_card_activity.created",
+        "name": "people.v2.events.workflow_card.updated",
         "attempt": 1,
         "payload": {
           "data": {
-            "type": "WorkflowCardActivity",
-            "id": "434295212",
+            "type": "WorkflowCard",
+            "id": "48343515",
             "attributes": {
-              "attachments_meta": [],
-              "attachments_urls": [],
-              "automation_url": null,
-              "comment": "completed this card",
-              "content": null,
-              "content_is_html": false,
-              "created_at": "2026-04-23T15:20:01Z",
-              "form_submission_url": null,
-              "person_avatar_url": "https://avatars.planningcenteronline.com/uploads/initials/OO.png?g=68x68%23",
-              "person_name": "office2at4thu.org office2at4thu.org",
-              "reassigned_to_avatar_url": null,
-              "reassigned_to_name": null,
-              "subject": null,
-              "type": "card_complete"
+              "calculated_due_at_in_days_ago": null,
+              "completed_at": "2026-04-23T15:20:01Z",
+              "created_at": "2026-04-22T15:04:51Z",
+              "flagged_for_notification_at": null,
+              "moved_to_step_at": "2026-04-23T15:20:01Z",
+              "overdue": false,
+              "removed_at": null,
+              "snooze_until": null,
+              "stage": "completed",
+              "sticky_assignment": false,
+              "updated_at": "2026-04-23T15:20:01Z"
             },
             "relationships": {
-              "workflow_card": {
+              "assignee": {
                 "data": {
-                  "type": "WorkflowCard",
-                  "id": "48343515"
+                  "type": "Assignee",
+                  "id": "190692446"
                 }
               },
-              "workflow_step": {
+              "person": {
+                "data": {
+                  "type": "Person",
+                  "id": "190947666"
+                }
+              },
+              "workflow": {
+                "data": {
+                  "type": "Workflow",
+                  "id": "725397"
+                }
+              },
+              "current_step": {
                 "data": null
               }
             },
             "links": {
-              "self": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/activities/434295212"
+              "activities": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/activities",
+              "assignee": "https://api.planningcenteronline.com/people/v2/people/190692446",
+              "current_step": null,
+              "go_back": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/go_back",
+              "notes": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/notes",
+              "person": "https://api.planningcenteronline.com/people/v2/people/190947666",
+              "promote": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/promote",
+              "remove": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/remove",
+              "restore": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/restore",
+              "send_email": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/send_email",
+              "skip_step": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/skip_step",
+              "snooze": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/snooze",
+              "unsnooze": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515/unsnooze",
+              "workflow": "https://api.planningcenteronline.com/people/v2/workflows/725397",
+              "self": "https://api.planningcenteronline.com/people/v2/workflows/725397/cards/48343515",
+              "html": "https://people.planningcenteronline.com/workflows/725397/steps/completed/assignees/190692446/completed/cards/48343515"
             }
           },
           "included": [],
           "meta": {
+            "can_include": [
+              "assignee",
+              "current_step",
+              "person",
+              "workflow"
+            ],
             "parent": {
-              "id": "48343515",
-              "type": "WorkflowCard"
+              "id": "725397",
+              "type": "Workflow"
             },
             "event_time": "2026-04-23T15:20:02Z",
-            "idempotency_token": "019dbaed-38e0-7a14-a278-84ec707e5754"
+            "idempotency_token": "019dbaed-38fe-7da3-bbbc-de979ec49112",
+            "previous": {
+              "attributes": {
+                "completed_at": null,
+                "stage": "ready",
+                "moved_to_step_at": "2026-04-23T14:49:55Z",
+                "updated_at": "2026-04-23T14:49:55Z"
+              },
+              "relationships": {
+                "current_step": {
+                  "data": {
+                    "type": "WorkflowStep",
+                    "id": "2004893"
+                  }
+                }
+              }
+            }
           }
         }
       },
