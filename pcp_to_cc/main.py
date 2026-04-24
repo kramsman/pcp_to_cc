@@ -758,7 +758,7 @@ def webhook():
         "people.v2.events.workflow_card.updated",
     }
     if event_name in _WORKFLOW_CARD_EVENTS:
-        trigger     = "completed" if event.stage == "completed" else "created"
+        trigger     = "completed" if event.stage == "completed" else "entered"
         person_id   = event.person_id
         workflow_id = event.workflow_id
         if not person_id:

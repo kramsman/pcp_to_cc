@@ -3,7 +3,9 @@ Application configuration — reads all environment variables.
 Import constants from here rather than reading os.environ directly in main.py.
 """
 
+import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -76,85 +78,41 @@ CC_API_BASE = "https://api.cc.email/v3"
 # destroyed:   "completed" = workflow card marked complete (workflow_card.updated, stage=completed)
 # value:       value to write to the field
 
-WORKFLOW_FIELD_RULES = [
-    {
-        "description": "Enter New Visitor workflow → set TempImportField = Visitor",
-        "workflow_id": "725397",  # New Visitor
-        # "field_id":    "1041878",  # TempImportField
-        "field_id":    "1038799",  # Member Stage
-        "trigger":     "created",
-        "value":       "Visitor",
-    },
-    {
-        "description": "Enter Explorer workflow → set TempImportField = Explorer",
-        "workflow_id": "731975",  # Explorer
-        "field_id": "1041878",  # TempImportField
-        "trigger": "created",
-        "value": "Explorer",
-    },
-    {
-        "description": "Enter Member in Process workflow → set TempImportField = Member In Process",
-        "workflow_id": "731457",  # Member in Process
-        "field_id": "1041878",  # TempImportField
-        "trigger": "created",
-        "value": "Member In Process",
-    },
-    {
-        "description": "Complete Member in Process workflow → set TempImportField = Member",
-        "workflow_id": "731457",  # Member in Process
-        "field_id": "1041878",  # TempImportField
-        "trigger": "completed",
-        "value": "Member",
-    },
-]
+_RULES_FILE = Path(__file__).parent.parent / "rules.json"
+_rules = json.loads(_RULES_FILE.read_text())
+
+# ─── Workflow Field Rules ─────────────────────────────────────────────────────
+# When a workflow card event fires, set a custom field on the person's profile.
+# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+#
+# workflow_id: PCP workflow ID ("" matches any workflow) — from find_pcp_ids.py
+# field_id:    PCP field definition ID — from find_pcp_ids.py
+# trigger:     "entered"   = person added to workflow (workflow_card.created)
+#              "completed" = workflow card marked complete (workflow_card.updated, stage=completed)
+# value:       value to write to the field
+
+WORKFLOW_FIELD_RULES = _rules["workflow_field_rules"]
 
 # ─── Workflow Chain Rules ─────────────────────────────────────────────────────
 # When a workflow card event fires, automatically add the person to another workflow.
+# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
 #
 # workflow_id:        source workflow ID — must match the completed workflow
 # trigger:            "completed" = workflow card marked complete
 # add_to_workflow_id: destination workflow to enroll the person in
 
-WORKFLOW_CHAIN_RULES = [
-    {
-        "description":        "Complete Member in Proc → add to Ceremony workflow",
-        "workflow_id":        "731457",  # Member in Process
-        "trigger":            "completed",
-        "add_to_workflow_id": "730471",  # Membership Ceremony
-    },
-]
+WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 
 # ─── CC List Rules ────────────────────────────────────────────────────────────
 # Controls which PCP profiles get added to which CC lists.
+# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
 #
-# Each rule: if the person has pcp_field == pcp_value, add them to all cc_lists.
-# Multiple rules can match — person is added to the union of all matching lists.
-#
-# pcp_field:  key in PCP_FIELD_IDS above (must match a defined PCP custom field)
-# pcp_value:  the field value that triggers the rule (case-sensitive)
-# cc_lists:   list of Constant Contact list UUIDs
-#
-# How to find CC list UUIDs:
-#   Log into Constant Contact → Contacts → Lists → click a list → UUID is in the URL.
-#   Then set the env var (e.g. CC_NEWSLETTER_LIST_ID=abc-123) in .env or set-env-vars.sh.
-#
-# To add a new list: copy one of the rule dicts below and fill in the values.
-# No other code changes needed.
+# pcp_field_id: PCP field definition ID — from find_pcp_ids.py
+# pcp_value:    field value that triggers the rule (case-sensitive)
+# cc_list_id:   Constant Contact list UUID (find via pcp_launcher → Find CC IDs)
 
 CC_LIST_RULES = [
-    {
-        "description":  "Newsletter opt-in → newsletter list",
-        "pcp_field_id": "1039700",
-        "pcp_value":    "true",
-        "cc_lists":     [os.environ.get("CC_NEWSLETTER_LIST_ID", "")],
-    },
-    # Example of a second rule — uncomment and fill in to activate:
-    # {
-    #     "description": "Events opt-in → events list",
-    #     "pcp_field":   "events_opt_in",
-    #     "pcp_value":   "Yes",
-    #     "cc_lists":    [os.environ.get("CC_EVENTS_LIST_ID", "")],
-    # },
+    {**r, "cc_lists": [r["cc_list_id"]]} for r in _rules["cc_list_rules"]
 ]
 
 # ─── Server ───────────────────────────────────────────────────────────────────

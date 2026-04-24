@@ -9,12 +9,6 @@ import sys
 import subprocess
 from pathlib import Path
 
-try:
-    import gitupdater
-except ImportError:
-    sys.path.append(os.path.expanduser("~/Dropbox/Postcard Files/"))
-    import gitupdater
-
 _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uvbekutils")
 if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
@@ -22,6 +16,20 @@ if str(_UTILS_ROOT) not in sys.path:
 from uvbekutils.pyautobek import confirm
 
 ROOT_PATH = Path(__file__).parent
+
+
+def _ensure_adc_auth() -> None:
+    import subprocess
+    import google.auth
+    import google.auth.transport.requests
+    try:
+        creds, _ = google.auth.default()
+        creds.refresh(google.auth.transport.requests.Request())
+    except Exception as e:
+        if not any(k in str(e).lower() for k in ("reauth", "expired", "invalid_grant", "could not be found", "credentials")):
+            return
+        print("\nGoogle credentials have expired. A browser window will open — sign in to continue.\n")
+        subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
 
 TOOLS = {
     "Transfer Data": {
@@ -31,6 +39,7 @@ TOOLS = {
             "Reads an exported CSV, applies a column mapping spreadsheet, and writes\n"
             "a reformatted CSV ready for import into the destination system."
         ),
+        "detach": False,
     },
     "Find PCP IDs": {
         "script": ROOT_PATH / "find_pcp_ids.py",
@@ -39,6 +48,7 @@ TOOLS = {
             "showing each field's numeric ID, name, and type.\n"
             "Use this to find field IDs needed for configuration."
         ),
+        "detach": False,
     },
     "Find CC IDs": {
         "script": ROOT_PATH / "find_cc_ids.py",
@@ -47,11 +57,29 @@ TOOLS = {
             "showing each list's UUID, name, status, and member count.\n"
             "Use this to find list IDs needed for configuration."
         ),
+        "detach": False,
+    },
+    "Edit Config": {
+        "script": ROOT_PATH / "edit_config.py",
+        "description": (
+            "Edit workflow and CC list rules without modifying Python code.\n"
+            "Changes are saved to rules.json — run deploy.sh to apply to Cloud Run."
+        ),
+        "detach": True,
+    },
+    "Check for Updates": {
+        "script": ROOT_PATH / "run_gitupdater.py",
+        "description": (
+            "Check GitHub for updates to uvbekutils and bekgoogle libraries\n"
+            "and reinstall if newer versions are available."
+        ),
+        "detach": False,
     },
 }
 
 
 def main() -> None:
+    _ensure_adc_auth()
     msg_lines = []
     for name, info in TOOLS.items():
         msg_lines.append(f"{name}\n{info['description']}\n")
@@ -65,7 +93,11 @@ def main() -> None:
 
     for name, info in TOOLS.items():
         if choice.lower() == name.lower():
-            subprocess.run([sys.executable, str(info["script"])], check=False)
+            if info.get("detach"):
+                subprocess.Popen([sys.executable, str(info["script"])],
+                                 start_new_session=True)
+            else:
+                subprocess.run([sys.executable, str(info["script"])], check=False)
             return
 
 

@@ -1,0 +1,48 @@
+{
+  "workflow_field_rules": [
+    {
+      "description": "Enter New Visitor workflow \u2192 set Member Stage = Visitor",
+      "workflow_id": "725397",
+      "field_id": "1038799",
+      "trigger": "entered",
+      "value": "Visitor"
+    },
+    {
+      "description": "Enter Explorer workflow \u2192 set TempImportField = Explorer",
+      "workflow_id": "731975",
+      "field_id": "1041878",
+      "trigger": "entered",
+      "value": "Explorer"
+    },
+    {
+      "description": "Enter Member in Process workflow \u2192 set TempImportField = Member In Process",
+      "workflow_id": "731457",
+      "field_id": "1041878",
+      "trigger": "entered",
+      "value": "Member In Process"
+    },
+    {
+      "description": "Complete Member in Process workflow \u2192 set TempImportField = Member",
+      "workflow_id": "731457",
+      "field_id": "1041878",
+      "trigger": "completed",
+      "value": "Member"
+    }
+  ],
+  "workflow_chain_rules": [
+    {
+      "description": "Complete Member in Proc \u2192 add to Ceremony workflow",
+      "workflow_id": "731457",
+      "trigger": "completed",
+      "add_to_workflow_id": "730471"
+    }
+  ],
+  "cc_list_rules": [
+    {
+      "description": "Newsletter opt-in \u2192 newsletter list",
+      "pcp_field_id": "1039700",
+      "pcp_value": "true",
+      "cc_list_id": "a8a7f3ea-1298-11ed-a555-fa163ec0164a"
+    }
+  ]
+}
