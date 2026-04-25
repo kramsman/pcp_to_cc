@@ -43,6 +43,12 @@
       "pcp_field_id": "1039700",
       "pcp_value": "true",
       "cc_list_id": "a8a7f3ea-1298-11ed-a555-fa163ec0164a"
+    },
+    {
+      "description": "What brings you = Service / Social Justice > Enviro Justice newsletter",
+      "pcp_field_id": "1039158",
+      "pcp_value": "Social Justice",
+      "cc_list_id": "3701fc00-8ca9-11ed-946d-fa163e57b7cb"
     }
   ]
 }
