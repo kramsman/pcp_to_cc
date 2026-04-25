@@ -1,0 +1,100 @@
+{
+  "links": {
+    "self": "https://api.planningcenteronline.com/people/v2/forms/1197074/form_submissions/41622949/form_submission_values"
+  },
+  "data": [
+    {
+      "type": "FormSubmissionValue",
+      "id": "271183630",
+      "attributes": {
+        "attachments": [],
+        "display_value": "Pastoral Care - if you can use emotional support, speak to a Pastoral Care Associate"
+      },
+      "relationships": {
+        "form_field": {
+          "data": {
+            "type": "FormField",
+            "id": "9491650"
+          }
+        },
+        "form_field_option": {
+          "data": null
+        },
+        "form_submission": {
+          "data": {
+            "type": "FormSubmission",
+            "id": "41622949"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.planningcenteronline.com/people/v2/forms/1197074/form_submissions/41622949/form_submission_values/271183630"
+      }
+    },
+    {
+      "type": "FormSubmissionValue",
+      "id": "271183631",
+      "attributes": {
+        "attachments": [],
+        "display_value": "1"
+      },
+      "relationships": {
+        "form_field": {
+          "data": {
+            "type": "FormField",
+            "id": "9507892"
+          }
+        },
+        "form_field_option": {
+          "data": null
+        },
+        "form_submission": {
+          "data": {
+            "type": "FormSubmission",
+            "id": "41622949"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.planningcenteronline.com/people/v2/forms/1197074/form_submissions/41622949/form_submission_values/271183631"
+      }
+    },
+    {
+      "type": "FormSubmissionValue",
+      "id": "271183632",
+      "attributes": {
+        "attachments": [],
+        "display_value": "No"
+      },
+      "relationships": {
+        "form_field": {
+          "data": {
+            "type": "FormField",
+            "id": "9587195"
+          }
+        },
+        "form_field_option": {
+          "data": null
+        },
+        "form_submission": {
+          "data": {
+            "type": "FormSubmission",
+            "id": "41622949"
+          }
+        }
+      },
+      "links": {
+        "self": "https://api.planningcenteronline.com/people/v2/forms/1197074/form_submissions/41622949/form_submission_values/271183632"
+      }
+    }
+  ],
+  "included": [],
+  "meta": {
+    "total_count": 3,
+    "count": 3,
+    "parent": {
+      "id": "41622949",
+      "type": "FormSubmission"
+    }
+  }
+}

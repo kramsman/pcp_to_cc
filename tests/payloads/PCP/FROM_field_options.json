@@ -1,0 +1,176 @@
+{
+    "links": {
+        "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options"
+    },
+    "data": [
+        {
+            "type": "FieldOption",
+            "id": "10676897",
+            "attributes": {
+                "sequence": 1,
+                "value": "Community - meeting like minded people"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676897"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676898",
+            "attributes": {
+                "sequence": 2,
+                "value": "Spirituality - take part in a liberal religion"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676898"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676899",
+            "attributes": {
+                "sequence": 3,
+                "value": "Religious Education for Children"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676899"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676900",
+            "attributes": {
+                "sequence": 4,
+                "value": "Religious Education for Adults"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676900"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676901",
+            "attributes": {
+                "sequence": 5,
+                "value": "Music - either to experience live music or sing yourself"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676901"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676902",
+            "attributes": {
+                "sequence": 6,
+                "value": "Service and/or Social Justice"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676902"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10676903",
+            "attributes": {
+                "sequence": 8,
+                "value": "Other: (put in Other Info)"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10676903"
+            }
+        },
+        {
+            "type": "FieldOption",
+            "id": "10680062",
+            "attributes": {
+                "sequence": 7,
+                "value": "Pastoral Care - if you can use emotional support, speak to a Pastoral Care Associate"
+            },
+            "relationships": {
+                "field_definition": {
+                    "data": {
+                        "type": "FieldDefinition",
+                        "id": "1039158"
+                    }
+                }
+            },
+            "links": {
+                "self": "https://api.planningcenteronline.com/people/v2/field_definitions/1039158/field_options/10680062"
+            }
+        }
+    ],
+    "included": [],
+    "meta": {
+        "total_count": 8,
+        "count": 8,
+        "can_order_by": [
+            "value",
+            "sequence"
+        ],
+        "can_query_by": [
+            "value",
+            "sequence"
+        ],
+        "parent": {
+            "id": "1039158",
+            "type": "FieldDefinition"
+        }
+    }
+}

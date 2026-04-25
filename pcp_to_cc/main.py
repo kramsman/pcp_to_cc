@@ -1,7 +1,7 @@
 """
 PCP → Constant Contact webhook receiver.
 
-Receives person.created webhooks from Planning Center People,
+Receives person.created and person.updated webhooks from Planning Center People,
 fetches the full person record from the PCP API (including email
 and custom field data), then adds matching profiles to Constant
 Contact lists based on CC_LIST_RULES in config.py.
@@ -85,13 +85,29 @@ class WorkflowCardActivity(BaseModel):
     attributes:    WorkflowCardActivityAttrs = WorkflowCardActivityAttrs()
     relationships: WorkflowCardActivityRels  = WorkflowCardActivityRels()
 
+class FormSubmissionAttrs(BaseModel):
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    requires_verification: bool = False
+    verified: bool = False
+
+class FormSubmissionRels(BaseModel):
+    person: RelRef = RelRef()
+    form:   RelRef = RelRef()
+
+class FormSubmission(BaseModel):
+    type: Literal["FormSubmission"]
+    id: str
+    attributes:    FormSubmissionAttrs = FormSubmissionAttrs()
+    relationships: FormSubmissionRels  = FormSubmissionRels()
+
 class Unknown(BaseModel):
     model_config = {"extra": "allow"}
     type: str
     id: str = ""
 
 # No discriminator — falls back to Unknown for any type PCP adds in future
-InnerData = Union[Person, WorkflowCard, WorkflowCardActivity, Unknown]
+InnerData = Union[Person, WorkflowCard, WorkflowCardActivity, FormSubmission, Unknown]
 
 class InnerPayload(BaseModel):
     data: InnerData
@@ -130,7 +146,23 @@ class LegacyWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, WorkflowCard):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        if isinstance(inner, FormSubmission):
+            return inner.relationships.person.data.id if inner.relationships.person.data else ""
         return inner.id
+
+    @property
+    def submission_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FormSubmission):
+            return inner.id
+        return ""
+
+    @property
+    def form_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FormSubmission):
+            return inner.relationships.form.data.id if inner.relationships.form.data else ""
+        return ""
 
     @property
     def workflow_id(self) -> str:
@@ -195,7 +227,23 @@ class PcpWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, WorkflowCard):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        if isinstance(inner, FormSubmission):
+            return inner.relationships.person.data.id if inner.relationships.person.data else ""
         return inner.id
+
+    @property
+    def submission_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FormSubmission):
+            return inner.id
+        return ""
+
+    @property
+    def form_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FormSubmission):
+            return inner.relationships.form.data.id if inner.relationships.form.data else ""
+        return ""
 
     @property
     def workflow_id(self) -> str:
@@ -275,6 +323,36 @@ class ApiWorkflowCard(BaseModel):
 class WorkflowCompleteResponse(BaseModel):
     data: ApiWorkflowCard
     included: list[Any] = []
+
+
+# ── FormSubmissionValues REST poll response ────────────────────────────────
+# Returned by GET /forms/{form_id}/form_submissions/{submission_id}/form_submission_values
+
+class FormSubmissionValueAttrs(BaseModel):
+    display_value: Optional[str] = None
+    attachments:   list[Any]     = []
+
+class FormSubmissionValueRels(BaseModel):
+    form_field:       RelRef = RelRef()
+    form_field_option: RelRef = RelRef()
+    form_submission:  RelRef = RelRef()
+
+class FormSubmissionValue(BaseModel):
+    type:          Literal["FormSubmissionValue"]
+    id:            str
+    attributes:    FormSubmissionValueAttrs = FormSubmissionValueAttrs()
+    relationships: FormSubmissionValueRels  = FormSubmissionValueRels()
+
+class FormSubmissionValuesResponse(BaseModel):
+    data: list[FormSubmissionValue] = []
+
+    def to_field_map(self) -> dict[str, str]:
+        """Returns {form_field_id: display_value} for all submission values."""
+        return {
+            fsv.relationships.form_field.data.id: (fsv.attributes.display_value or "")
+            for fsv in self.data
+            if fsv.relationships.form_field.data
+        }
 
 
 def parse_any_pcp_payload(raw: dict) -> tuple[str, BaseModel]:
@@ -485,7 +563,8 @@ def apply_rules(person: dict) -> list[str]:
     for rule in config.CC_LIST_RULES:
         field_id     = rule["pcp_field_id"]
         actual_value = custom_fields.get(str(field_id), "")
-        if actual_value == rule["pcp_value"]:
+        pcp_value    = rule["pcp_value"]
+        if pcp_value and pcp_value in actual_value:
             valid_list_ids = [lid for lid in rule["cc_lists"] if lid]
             matched.update(valid_list_ids)
             logger.info(f"Rule matched: '{rule['description']}' → {valid_list_ids}")
@@ -789,7 +868,11 @@ def webhook():
             logger.info(f"No workflow rules matched workflow_id={workflow_id} trigger={trigger}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
-    if event_name != "people.v2.events.person.created":
+    _PERSON_EVENTS = {
+        "people.v2.events.person.created",
+        "people.v2.events.person.updated",
+    }
+    if event_name not in _PERSON_EVENTS:
         extras = {k: v for k, v in {
             "activity_type": event.activity_type,
             "person_name":   event.person_name,
@@ -805,7 +888,7 @@ def webhook():
         logger.warning("Rejected: could not extract person_id from payload")
         return jsonify({"error": "missing person id in payload"}), 400
 
-    logger.info(f"Processing person.created  person_id={person_id}")
+    logger.info(f"Processing {event_name}  person_id={person_id}")
 
     # ── Fetch full person from PCP ────────────────────────────────────────────
     if config.TEST_MODE:
