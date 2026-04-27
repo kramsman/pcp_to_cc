@@ -7,10 +7,16 @@ run without credentials. Use @pytest.mark.integration for tests that need live s
 
 import json
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+# main.py uses `import config` (bare), so pcp_to_cc/ must be on sys.path
+_PKG_DIR = Path(__file__).parent.parent / "pcp_to_cc"
+if str(_PKG_DIR) not in sys.path:
+    sys.path.insert(0, str(_PKG_DIR))
 
 # ── Path helpers ───────────────────────────────────────────────────────────────
 
@@ -30,11 +36,9 @@ def set_env_vars(monkeypatch):
     Set required env vars before each test so config.py imports without error.
     PCP_NEWSLETTER_TRIGGER_FIELD_ID=999 matches the field_definition id in the mock PCP API response.
     """
-    monkeypatch.setenv("CLOUD_PROJECT_ID",                "test-project")
-    monkeypatch.setenv("TEST_MODE",                       "true")
-    monkeypatch.setenv("LOG_PAYLOADS",                    "false")
-    monkeypatch.setenv("PCP_NEWSLETTER_TRIGGER_FIELD_ID", "999")
-    monkeypatch.setenv("CC_NEWSLETTER_LIST_ID",   "cc-list-uuid-001")
+    monkeypatch.setenv("CLOUD_PROJECT_ID", "test-project")
+    monkeypatch.setenv("TEST_MODE",        "true")
+    monkeypatch.setenv("LOG_PAYLOADS",     "false")
 
 
 # ── Secret Manager mock ────────────────────────────────────────────────────────
@@ -99,7 +103,7 @@ def pcp_person_with_opt_in():
                 "attributes": {"value": "true"},
                 "relationships": {
                     "field_definition": {
-                        "data": {"type": "FieldDefinition", "id": "999"}
+                        "data": {"type": "FieldDefinition", "id": "1039700"}
                     }
                 },
             },
@@ -128,7 +132,42 @@ def pcp_person_no_opt_in():
                 "attributes": {"value": "No"},
                 "relationships": {
                     "field_definition": {
-                        "data": {"type": "FieldDefinition", "id": "999"}
+                        "data": {"type": "FieldDefinition", "id": "1039700"}
+                    }
+                },
+            },
+        ],
+    }
+
+
+@pytest.fixture
+def pcp_person_with_social_justice():
+    """PCP API response for a person whose 'What brings you' field = Social Justice."""
+    return {
+        "data": {
+            "type": "Person",
+            "id": "12345681",
+            "attributes": {
+                "first_name": "Carol",
+                "last_name": "Davis",
+            },
+        },
+        "included": [
+            {
+                "type": "Email",
+                "id": "777",
+                "attributes": {
+                    "address": "carol.davis@example.com",
+                    "primary": True,
+                },
+            },
+            {
+                "type": "FieldDatum",
+                "id": "888",
+                "attributes": {"value": "Social Justice"},
+                "relationships": {
+                    "field_definition": {
+                        "data": {"type": "FieldDefinition", "id": "1039158"}
                     }
                 },
             },
@@ -152,7 +191,7 @@ def pcp_person_no_email():
                 "attributes": {"value": "true"},
                 "relationships": {
                     "field_definition": {
-                        "data": {"type": "FieldDefinition", "id": "999"}
+                        "data": {"type": "FieldDefinition", "id": "1039700"}
                     }
                 },
             },

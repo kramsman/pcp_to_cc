@@ -26,7 +26,7 @@ class TestParsePerson:
         assert person["first_name"] == "Jane"
         assert person["last_name"]  == "Smith"
         assert person["email"]      == "jane.smith@example.com"
-        assert person["custom_fields"]["999"] == "true"
+        assert person["custom_fields"]["1039700"] == "true"
 
     def test_no_email(self, pcp_person_no_email):
         from pcp_to_cc.main import parse_person
@@ -73,7 +73,7 @@ class TestApplyRules:
         list_ids = apply_rules(person)
 
         print(f"\nmatched list_ids: {list_ids}")
-        assert "cc-list-uuid-001" in list_ids
+        assert "a8a7f3ea-1298-11ed-a555-fa163ec0164a" in list_ids
 
     def test_rule_not_matched(self, pcp_person_no_opt_in):
         from pcp_to_cc.main import apply_rules, parse_person
@@ -91,7 +91,24 @@ class TestApplyRules:
         list_ids = apply_rules(person)
 
         print(f"\nmatched list_ids: {list_ids}")
-        assert "cc-list-uuid-001" in list_ids
+        assert "a8a7f3ea-1298-11ed-a555-fa163ec0164a" in list_ids
+
+    def test_what_brings_you_social_justice(self, pcp_person_with_social_justice):
+        from pcp_to_cc.main import apply_rules, parse_person
+        person   = parse_person(pcp_person_with_social_justice)
+        list_ids = apply_rules(person)
+
+        print(f"\nmatched list_ids: {list_ids}")
+        assert "3701fc00-8ca9-11ed-946d-fa163e57b7cb" in list_ids
+
+    def test_what_brings_you_no_match(self, pcp_person_with_social_justice):
+        from pcp_to_cc.main import apply_rules, parse_person
+        pcp_person_with_social_justice["included"][1]["attributes"]["value"] = "Community"
+        person   = parse_person(pcp_person_with_social_justice)
+        list_ids = apply_rules(person)
+
+        print(f"\nmatched list_ids: {list_ids}")
+        assert "3701fc00-8ca9-11ed-946d-fa163e57b7cb" not in list_ids
 
 
 # ── TestWebhookRoute ───────────────────────────────────────────────────────────

@@ -485,7 +485,15 @@ def get_secret(secret_id: str) -> str:
     """
     if secret_id not in _secrets:
         name = f"projects/{config.CLOUD_PROJECT_ID}/secrets/{secret_id}/versions/latest"
-        response = _get_secret_client().access_secret_version(request={"name": name})
+        try:
+            response = _get_secret_client().access_secret_version(request={"name": name})
+        except Exception as e:
+            if not any(k in str(e).lower() for k in ("reauth", "expired", "unavailable", "credentials")):
+                raise
+            _ensure_adc_auth()
+            global _secret_client
+            _secret_client = None
+            response = _get_secret_client().access_secret_version(request={"name": name})
         _secrets[secret_id] = response.payload.data.decode("UTF-8")
     return _secrets[secret_id]
 
@@ -543,7 +551,10 @@ def parse_person(pcp_api_response: dict) -> dict:
     Returns a flat dict:
         person_id, first_name, last_name, email, custom_fields
     """
-    return PcpPersonResponse.model_validate(pcp_api_response).to_person_dict()
+    try:
+        return PcpPersonResponse.model_validate(pcp_api_response).to_person_dict()
+    except ValidationError:
+        return {"person_id": "", "first_name": "", "last_name": "", "email": "", "custom_fields": {}}
 
 
 # ─── Rule matching ────────────────────────────────────────────────────────────
@@ -891,21 +902,12 @@ def webhook():
     logger.info(f"Processing {event_name}  person_id={person_id}")
 
     # ── Fetch full person from PCP ────────────────────────────────────────────
+    pcp_data = fetch_person_from_pcp(person_id)
+    if pcp_data is None:
+        return jsonify({"error": "failed to fetch person from PCP API"}), 502
+    person = parse_person(pcp_data)
     if config.TEST_MODE:
-        inner = event.delivery.attributes.payload.data
-        person = {
-            "person_id":     person_id,
-            "first_name":    (getattr(getattr(inner, "attributes", None), "first_name", "") or "").strip().title(),
-            "last_name":     (getattr(getattr(inner, "attributes", None), "last_name",  "") or "").strip().title(),
-            "email":         "test@example.com",
-            "custom_fields": {},
-        }
-        logger.info(f"TEST_MODE — using mock person data (no PCP API call)")
-    else:
-        pcp_data = fetch_person_from_pcp(person_id)
-        if pcp_data is None:
-            return jsonify({"error": "failed to fetch person from PCP API"}), 502
-        person = parse_person(pcp_data)
+        logger.info(f"TEST_MODE — fetched real PCP data, CC update will be skipped")
     name_display = f"{person['first_name']} {person['last_name']}".strip() or f"person_id={person_id}"
     logger.info(f"Parsed: {name_display}  email={'(none)' if not person['email'] else '(set)'}")
 
