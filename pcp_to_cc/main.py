@@ -419,7 +419,7 @@ class PcpPersonResponse(BaseModel):
         last_name  = (attrs.last_name  or "").strip().title()
 
         email = ""
-        custom_fields: dict[str, str] = {}
+        custom_fields: dict[str, list[str]] = {}
 
         for item in self.included:
             item_type = item.get("type") if isinstance(item, dict) else getattr(item, "type", "")
@@ -443,7 +443,7 @@ class PcpPersonResponse(BaseModel):
                 )
                 value = (item_attrs.get("value") or "")
                 if field_id:
-                    custom_fields[str(field_id)] = value
+                    custom_fields.setdefault(str(field_id), []).append(value)
 
         return {
             "person_id":     self.data.id,
@@ -572,15 +572,15 @@ def apply_rules(person: dict) -> list[str]:
     custom_fields = person.get("custom_fields", {})
 
     for rule in config.CC_LIST_RULES:
-        field_id     = rule["pcp_field_id"]
-        actual_value = custom_fields.get(str(field_id), "")
-        pcp_value    = rule["pcp_value"]
-        if pcp_value and pcp_value in actual_value:
+        field_id      = rule["pcp_field_id"]
+        actual_values = custom_fields.get(str(field_id), [])
+        pcp_value     = rule["pcp_value"]
+        if pcp_value and any(pcp_value in v for v in actual_values):
             valid_list_ids = [lid for lid in rule["cc_lists"] if lid]
             matched.update(valid_list_ids)
             logger.info(f"Rule matched: '{rule['description']}' → {valid_list_ids}")
         else:
-            logger.info(f"Rule not matched: '{rule['description']}' (field_id={field_id}, got '{actual_value}', want '{rule['pcp_value']}')")
+            logger.info(f"Rule not matched: '{rule['description']}' (field_id={field_id}, got {actual_values}, want '{pcp_value}')")
 
     return list(matched)
 
