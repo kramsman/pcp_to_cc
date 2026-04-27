@@ -882,6 +882,7 @@ def webhook():
     _PERSON_EVENTS = {
         "people.v2.events.person.created",
         "people.v2.events.person.updated",
+        "people.v2.events.form_submission.created",
     }
     if event_name not in _PERSON_EVENTS:
         extras = {k: v for k, v in {

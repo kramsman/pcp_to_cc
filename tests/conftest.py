@@ -204,7 +204,7 @@ def pcp_person_no_email():
 @pytest.fixture
 def cc_add_contact_payload():
     """Expected JSON body sent to CC POST /v3/contacts to add a contact to a list."""
-    return load_payload("cc_add_contact.json")
+    return load_payload("CC/cc_add_contact.json")
 
 
 # ── Webhook payload fixtures ───────────────────────────────────────────────────
@@ -212,7 +212,7 @@ def cc_add_contact_payload():
 @pytest.fixture
 def webhook_payload():
     """Valid PCP person.created webhook payload."""
-    return load_payload("person_created_webhook.json")
+    return load_payload("PCP/person_created_webhook.json")
 
 
 @pytest.fixture

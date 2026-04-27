@@ -18,43 +18,43 @@ RULES_FILE = Path(__file__).parent / "rules.json"
 
 TABS = [
     {
-        "title":         "Workflow Field Rules",
+        "title":         "Set PCP Field Values",
         "key":           "workflow_field_rules",
         "cols":          ["description", "workflow_id", "field_id", "trigger", "value"],
         "labels":        {
             "description": "Description",
-            "workflow_id": "Workflow ID",
-            "field_id":    "Field ID",
+            "workflow_id": "PCP Workflow ID",
+            "field_id":    "PCP Field ID",
             "trigger":     "Trigger",
             "value":       "Value to set",
         },
-        "widths":        [300, 90, 90, 90, 130],
+        "widths":        [375, 110, 110, 110, 160],
         "trigger_field": "trigger",
     },
     {
-        "title":         "Chain Rules",
+        "title":         "Chain PCP Workflows",
         "key":           "workflow_chain_rules",
         "cols":          ["description", "workflow_id", "trigger", "add_to_workflow_id"],
         "labels":        {
             "description":        "Description",
-            "workflow_id":        "Source Workflow ID",
+            "workflow_id":        "Start Workflow ID",
             "trigger":            "Trigger",
-            "add_to_workflow_id": "Add to Workflow ID",
+            "add_to_workflow_id": "Add to PC Workflow ID",
         },
-        "widths":        [300, 120, 90, 140],
+        "widths":        [375, 150, 110, 175],
         "trigger_field": "trigger",
     },
     {
-        "title":         "CC List Rules",
+        "title":         "Assign to CC Lists",
         "key":           "cc_list_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],
         "labels":        {
             "description":  "Description",
             "pcp_field_id": "PCP Field ID",
-            "pcp_value":    "PCP Field Value",
+            "pcp_value":    "PCP Field Check Value",
             "cc_list_id":   "CC List UUID",
         },
-        "widths":        [280, 100, 100, 300],
+        "widths":        [350, 125, 125, 375],
         "trigger_field": None,
     },
 ]
@@ -64,7 +64,7 @@ class RuleDialog(QDialog):
     def __init__(self, tab: dict, initial: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Rule" if initial else "Add Rule")
-        self.setMinimumWidth(760)
+        self.setMinimumWidth(950)
         layout = QFormLayout(self)
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self._entries = {}
@@ -149,8 +149,8 @@ class TabWidget(QWidget):
 class RuleEditor(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PCP → CC Rule Editor")
-        self.setMinimumWidth(760)
+        self.setWindowTitle("Rule Editor")
+        self.setMinimumWidth(950)
         with open(RULES_FILE) as f:
             data = json.load(f)
         self.rules = {tab["key"]: list(data[tab["key"]]) for tab in TABS}

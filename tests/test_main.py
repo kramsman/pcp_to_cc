@@ -7,9 +7,12 @@ Integration:     pytest tests/ -s -v -m integration
 """
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+PAYLOADS_DIR = Path(__file__).parent / "payloads"
 
 
 # ── TestParsePerson ────────────────────────────────────────────────────────────
@@ -129,9 +132,20 @@ class TestWebhookRoute:
         print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
         assert resp.status_code == 400
 
-    def test_ignored_event(self, flask_client, webhook_payload):
-        webhook_payload["name"] = "person.updated"
-        resp = flask_client.post("/webhook", json=webhook_payload)
+    def test_ignored_event(self, flask_client):
+        payload = {
+            "data": [{
+                "type": "EventDelivery",
+                "id": "test-ignored",
+                "attributes": {
+                    "name": "people.v2.events.workflow_step.updated",
+                    "attempt": 1,
+                    "payload": json.dumps({"data": {"type": "WorkflowStep", "id": "999"}}),
+                },
+                "relationships": {"organization": {"data": {"type": "Organization", "id": "526881"}}},
+            }]
+        }
+        resp = flask_client.post("/webhook", json=payload)
         print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ignored"
@@ -167,8 +181,19 @@ class TestWebhookRoute:
         print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "test_mode"
-        assert "cc-list-uuid-001" in resp.get_json()["would_add_to_lists"]
+        assert "a8a7f3ea-1298-11ed-a555-fa163ec0164a" in resp.get_json()["would_add_to_lists"]
         mock_add.assert_not_called()
+
+    def test_form_submission_triggers_cc_check(self, flask_client, pcp_person_with_opt_in):
+        """form_submission.created should be processed, not ignored."""
+        payload = PAYLOADS_DIR / "PCP" / "FROM_form_submission_created.json"
+        import json
+        body = json.loads(payload.read_text())
+        with patch("pcp_to_cc.main.fetch_person_from_pcp", return_value=pcp_person_with_opt_in):
+            resp = flask_client.post("/webhook", json=body)
+        print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "test_mode"
 
     def test_pcp_fetch_failure_returns_502(self, flask_client, webhook_payload):
         with patch("pcp_to_cc.main.fetch_person_from_pcp", return_value=None):
