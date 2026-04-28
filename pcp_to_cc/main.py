@@ -952,13 +952,18 @@ def settings():
         }
         for r in config.CC_LIST_RULES
     ]
+    import os
+    rules_source = "env_var" if os.environ.get("RULES_JSON") else "file"
     return jsonify({
-        "TEST_MODE":        config.TEST_MODE,
-        "LOG_PAYLOADS":     config.LOG_PAYLOADS,
-        "CLOUD_PROJECT_ID": config.CLOUD_PROJECT_ID,
-        "PCP_API_BASE":     config.PCP_API_BASE,
-        "CC_API_BASE":      config.CC_API_BASE,
-        "CC_LIST_RULES":    rules_summary,
+        "TEST_MODE":              config.TEST_MODE,
+        "LOG_PAYLOADS":           config.LOG_PAYLOADS,
+        "CLOUD_PROJECT_ID":       config.CLOUD_PROJECT_ID,
+        "PCP_API_BASE":           config.PCP_API_BASE,
+        "CC_API_BASE":            config.CC_API_BASE,
+        "CC_LIST_RULES":          rules_summary,
+        "RULES_SOURCE":           rules_source,
+        "WORKFLOW_FIELD_RULES":   config.WORKFLOW_FIELD_RULES,
+        "WORKFLOW_CHAIN_RULES":   config.WORKFLOW_CHAIN_RULES,
     }), 200
 
 

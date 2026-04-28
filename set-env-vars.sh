@@ -18,16 +18,16 @@ ENV_VARS=(
   # Useful for discovering PCP field definition IDs. Contains PII — disable when stable.
   "LOG_PAYLOADS=true"
 
-  # ── Constant Contact list IDs ──────────────────────────────────────────────
-  # Find in CC: Contacts → Lists → click a list → UUID is in the URL.
-  #  "CC_NEWSLETTER_LIST_ID=dd8406e2-129f-11ed-a1a4-fa163eaee913"  Racial Justice
-  # Can be run in utility pcp_launcher.py
-  "CC_NEWSLETTER_LIST_ID=a8a7f3ea-1298-11ed-a555-fa163ec0164a"  # Newsletter
-
   # ── GCP ────────────────────────────────────────────────────────────────────
   "CLOUD_PROJECT_ID=pcp-to-cc"
 
 )
+
+# ── Rules (rules.json → RULES_JSON env var) ────────────────────────────────
+# Minify rules.json and inject as an env var so rule changes take effect
+# by running this script alone — no full redeploy needed.
+RULES_JSON=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps(json.load(open('rules.json'))).encode()).decode())")
+ENV_VARS+=("RULES_JSON=${RULES_JSON}")
 
 # Join array with | separator and pass to gcloud
 IFS='|'

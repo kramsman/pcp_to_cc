@@ -78,8 +78,20 @@ CC_API_BASE = "https://api.cc.email/v3"
 # destroyed:   "completed" = workflow card marked complete (workflow_card.updated, stage=completed)
 # value:       value to write to the field
 
-_RULES_FILE = Path(__file__).parent.parent / "rules.json"
-_rules = json.loads(_RULES_FILE.read_text())
+_rules_env = os.environ.get("RULES_JSON")
+if _rules_env:
+    try:
+        import base64
+        _rules = json.loads(base64.b64decode(_rules_env).decode())
+        logger.info(f"rules loaded from RULES_JSON env var: {len(_rules.get('cc_list_rules',[]))} cc_list_rules")
+    except Exception as _e:
+        logger.error(f"RULES_JSON env var decode failed ({_e}), falling back to rules.json")
+        _RULES_FILE = Path(__file__).parent.parent / "rules.json"
+        _rules = json.loads(_RULES_FILE.read_text())
+else:
+    logger.info("RULES_JSON env var not set — loading rules.json from container")
+    _RULES_FILE = Path(__file__).parent.parent / "rules.json"
+    _rules = json.loads(_RULES_FILE.read_text())
 
 # ─── Workflow Field Rules ─────────────────────────────────────────────────────
 # When a workflow card event fires, set a custom field on the person's profile.

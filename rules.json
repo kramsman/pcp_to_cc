@@ -1,40 +1,52 @@
 {
   "workflow_field_rules": [
     {
-      "description": "Enter New Visitor workflow \u2192 set Member Stage = Visitor",
+      "description": "Enter New Visitor workflow > set Member Stage to Visitor",
       "workflow_id": "725397",
       "field_id": "1038799",
       "trigger": "entered",
       "value": "Visitor"
     },
     {
-      "description": "Enter Explorer workflow \u2192 set TempImportField = Explorer",
+      "description": "Enter Explorer workflow > set Member Stage to Explorer",
       "workflow_id": "731975",
-      "field_id": "1041878",
+      "field_id": "1038799",
       "trigger": "entered",
       "value": "Explorer"
     },
     {
-      "description": "Enter Member in Process workflow \u2192 set TempImportField = Member In Process",
+      "description": "Enter Member in Process workflow > set Member Stage to Member In Process",
       "workflow_id": "731457",
-      "field_id": "1041878",
+      "field_id": "1038799",
       "trigger": "entered",
       "value": "Member In Process"
     },
     {
-      "description": "Complete Member in Process workflow \u2192 set TempImportField = Member",
+      "description": "Complete Member in Process workflow > set Member Stage to Member",
       "workflow_id": "731457",
-      "field_id": "1041878",
+      "field_id": "1038799",
       "trigger": "completed",
       "value": "Member"
     }
   ],
   "workflow_chain_rules": [
     {
-      "description": "Complete Member in Proc \u2192 add to Ceremony workflow",
+      "description": "Complete Member in Proc workflow > add to Ceremony",
       "workflow_id": "731457",
       "trigger": "completed",
       "add_to_workflow_id": "730471"
+    },
+    {
+      "description": "Complete Visitor workflow > Explorer",
+      "workflow_id": "725397",
+      "trigger": "completed",
+      "add_to_workflow_id": "731975"
+    },
+    {
+      "description": "Complete Explorer workflow > Member in Process",
+      "workflow_id": "731975",
+      "trigger": "completed",
+      "add_to_workflow_id": "731457"
     }
   ],
   "cc_list_rules": [
