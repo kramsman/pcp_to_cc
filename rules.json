@@ -49,6 +49,7 @@
       "add_to_workflow_id": "731457"
     }
   ],
+  "form_completion_rules": [],
   "cc_list_rules": [
     {
       "description": "Newsletter opt-in \u2192 newsletter list",

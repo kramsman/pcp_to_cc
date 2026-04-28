@@ -45,6 +45,18 @@ TABS = [
         "trigger_field": "trigger",
     },
     {
+        "title":         "Complete Workflows on Form",
+        "key":           "form_completion_rules",
+        "cols":          ["description", "form_id", "complete_workflow_id"],
+        "labels":        {
+            "description":          "Description",
+            "form_id":              "PCP trigger Form ID",
+            "complete_workflow_id": "Workflow to Complete ID",
+        },
+        "widths":        [375, 150, 175],
+        "trigger_field": None,
+    },
+    {
         "title":         "Assign to CC Lists",
         "key":           "cc_list_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],

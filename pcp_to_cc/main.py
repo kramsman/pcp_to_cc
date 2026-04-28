@@ -812,6 +812,40 @@ def add_to_workflow(person_id: str, workflow_id: str) -> bool:
         return False
 
 
+def complete_workflow_for_person(person_id: str, workflow_id: str) -> bool:
+    """Find the person's active card in workflow_id and mark it completed. Silent no-op if not enrolled."""
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would complete workflow {workflow_id} for person {person_id}")
+        return True
+    try:
+        auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+        r = requests.get(
+            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
+            params={"where[person_id]": person_id},
+            auth=auth, timeout=10,
+        )
+        r.raise_for_status()
+        cards = r.json().get("data", [])
+        active = [c for c in cards if c.get("attributes", {}).get("stage") != "completed"]
+        if not active:
+            logger.info(f"complete_workflow_for_person: person {person_id} not active in workflow {workflow_id} — skipping")
+            return True
+        card_id = active[0]["id"]
+        r2 = requests.patch(
+            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards/{card_id}",
+            json={"data": {"type": "WorkflowCard", "id": card_id, "attributes": {"stage": "completed"}}},
+            auth=auth, timeout=10,
+        )
+        r2.raise_for_status()
+        logger.info(f"complete_workflow_for_person: completed card {card_id} in workflow {workflow_id} for person {person_id}  HTTP {r2.status_code}")
+        return True
+    except requests.RequestException as e:
+        logger.error(f"complete_workflow_for_person failed person {person_id} workflow {workflow_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"PCP API error body: {e.response.text}")
+        return False
+
+
 # ─── Flask routes ─────────────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -878,6 +912,16 @@ def webhook():
         if not matched:
             logger.info(f"No workflow rules matched workflow_id={workflow_id} trigger={trigger}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
+
+    # ── Form completion rules — complete workflows on form submit ─────────────
+    if event_name == "people.v2.events.form_submission.created":
+        form_id   = event.form_id
+        person_id = event.person_id
+        if form_id and person_id:
+            for rule in config.FORM_COMPLETION_RULES:
+                if rule["form_id"] == form_id:
+                    complete_workflow_for_person(person_id, rule["complete_workflow_id"])
+                    logger.info(f"Form completion rule applied: '{rule['description']}'")
 
     _PERSON_EVENTS = {
         "people.v2.events.person.created",
@@ -964,6 +1008,7 @@ def settings():
         "RULES_SOURCE":           rules_source,
         "WORKFLOW_FIELD_RULES":   config.WORKFLOW_FIELD_RULES,
         "WORKFLOW_CHAIN_RULES":   config.WORKFLOW_CHAIN_RULES,
+        "FORM_COMPLETION_RULES":  config.FORM_COMPLETION_RULES,
     }), 200
 
 

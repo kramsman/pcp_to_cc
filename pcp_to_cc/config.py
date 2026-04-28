@@ -103,7 +103,8 @@ else:
 #              "completed" = workflow card marked complete (workflow_card.updated, stage=completed)
 # value:       value to write to the field
 
-WORKFLOW_FIELD_RULES = _rules["workflow_field_rules"]
+WORKFLOW_FIELD_RULES    = _rules["workflow_field_rules"]
+FORM_COMPLETION_RULES   = _rules.get("form_completion_rules", [])
 
 # ─── Workflow Chain Rules ─────────────────────────────────────────────────────
 # When a workflow card event fires, automatically add the person to another workflow.
