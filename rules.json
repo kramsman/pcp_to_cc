@@ -15,18 +15,18 @@
       "value": "Explorer"
     },
     {
-      "description": "Enter Member in Process workflow > set Member Stage to Member In Process",
-      "workflow_id": "731457",
-      "field_id": "1038799",
-      "trigger": "entered",
-      "value": "Member In Process"
-    },
-    {
       "description": "Complete Member in Process workflow > set Member Stage to Member",
       "workflow_id": "731457",
       "field_id": "1038799",
       "trigger": "completed",
       "value": "Member"
+    },
+    {
+      "description": "Enter Member in Process workflow > set Member Stage to Member In Process",
+      "workflow_id": "731457",
+      "field_id": "1038799",
+      "trigger": "entered",
+      "value": "Member In Process"
     }
   ],
   "workflow_chain_rules": [

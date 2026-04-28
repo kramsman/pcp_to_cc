@@ -105,7 +105,8 @@ class TabWidget(QWidget):
         self.table.doubleClicked.connect(self._edit)
         layout.addWidget(self.table)
         btn_row = QHBoxLayout()
-        for label, fn in [("Add", self._add), ("Edit", self._edit), ("Delete", self._delete)]:
+        for label, fn in [("Add", self._add), ("Edit", self._edit), ("Delete", self._delete),
+                          ("▲ Up", self._move_up), ("▼ Down", self._move_down)]:
             btn = QPushButton(label)
             btn.clicked.connect(fn)
             btn_row.addWidget(btn)
@@ -144,6 +145,22 @@ class TabWidget(QWidget):
         if QMessageBox.question(self, "Delete", f"Delete rule:\n{desc}?") == QMessageBox.Yes:
             self.rules.pop(row)
             self._refresh()
+
+    def _move_up(self):
+        row = self.table.currentRow()
+        if row <= 0:
+            return
+        self.rules[row - 1], self.rules[row] = self.rules[row], self.rules[row - 1]
+        self._refresh()
+        self.table.selectRow(row - 1)
+
+    def _move_down(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.rules) - 1:
+            return
+        self.rules[row + 1], self.rules[row] = self.rules[row], self.rules[row + 1]
+        self._refresh()
+        self.table.selectRow(row + 1)
 
 
 class RuleEditor(QWidget):
