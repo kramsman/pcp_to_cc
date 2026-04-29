@@ -1,9 +1,8 @@
 """
-Helper script: list all custom field definitions in Planning Center People.
+Helper script: list workflows, forms, and custom field definitions from Planning Center People.
 
-Use this BEFORE deploying to find the numeric ID for any custom field
-(e.g. newsletter_opt_in). No deployed service needed — runs locally
-using your PCP credentials from GCP Secret Manager.
+Output order: Workflows → Forms → Custom Fields
+Results are printed to the terminal and saved to find_pcp_ids.txt.
 
 Prerequisites:
     1. .env has CLOUD_PROJECT_ID set.
@@ -12,9 +11,6 @@ Prerequisites:
 
 Usage:
     python find_pcp_ids.py
-
-Then copy the ID for your field and set it as
-PCP_NEWSLETTER_TRIGGER_FIELD_ID in .env and set-env-vars.sh.
 """
 
 import os
@@ -64,75 +60,74 @@ def _emit(lines: list[str], text: str) -> None:
     print(text)
 
 
+def _fetch_all(endpoint: str, auth: tuple, lines: list[str]) -> list[dict]:
+    """Fetch all pages from a PCP API endpoint, returning the combined data list."""
+    items = []
+    next_url = f"{PCP_API_BASE}/{endpoint}"
+    while next_url:
+        try:
+            resp = requests.get(next_url, auth=auth, timeout=10,
+                                headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"})
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            _emit(lines, f"ERROR fetching {endpoint}: {e}")
+            break
+        data = resp.json()
+        items.extend(data.get("data", []))
+        next_url = data.get("links", {}).get("next")
+    return items
+
+
 def main():
     if not _project_id:
         print("ERROR: CLOUD_PROJECT_ID not set in .env")
         sys.exit(1)
 
-    url = f"{PCP_API_BASE}/field_definitions"
     app_id = _get_secret("PCP_APP_ID")
     secret = _get_secret("PCP_SECRET")
-    auth = (app_id, secret)
-
+    auth   = (app_id, secret)
     lines: list[str] = []
 
-    _emit(lines, "\n=== Custom Fields ===\n")
-
-    fields = []
-    next_url = url
-    while next_url:
-        try:
-            resp = requests.get(next_url, auth=auth, timeout=10, headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"})
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            print(f"ERROR: {e}")
-            sys.exit(1)
-        data = resp.json()
-        fields.extend(data.get("data", []))
-        next_url = data.get("links", {}).get("next")
-
-    if not fields:
-        _emit(lines, "No field definitions found.")
-        return
-
-    _emit(lines, f"{'ID':<12}  {'Name':<40}  Field Type")
-    _emit(lines, "-" * 70)
-    for f in fields:
-        fid = f.get("id", "")
-        attrs = f.get("attributes", {})
-        name = attrs.get("name", "")
-        ftype = attrs.get("field_type", "")
-        _emit(lines, f"{fid:<12}  {name:<40}  {ftype}")
-
-    _emit(lines, f"\nTotal: {len(fields)} field definitions")
-
     # --- Workflows ---
-    _emit(lines, "\n\n=== Workflows ===\n")
-    workflows = []
-    next_url = f"{PCP_API_BASE}/workflows"
-    while next_url:
-        try:
-            resp = requests.get(next_url, auth=auth, timeout=10, headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"})
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            _emit(lines, f"ERROR fetching workflows: {e}")
-            break
-        data = resp.json()
-        workflows.extend(data.get("data", []))
-        next_url = data.get("links", {}).get("next")
-
+    _emit(lines, "\n=== Workflows ===\n")
+    workflows = _fetch_all("workflows", auth, lines)
     if not workflows:
         _emit(lines, "No workflows found.")
     else:
         _emit(lines, f"{'ID':<12}  {'Name':<50}  Campus")
         _emit(lines, "-" * 80)
         for w in workflows:
-            wid = w.get("id", "")
             attrs = w.get("attributes", {})
-            name = attrs.get("name", "")
             campus = attrs.get("campus_name", "") or ""
-            _emit(lines, f"{wid:<12}  {name:<50}  {campus}")
+            _emit(lines, f"{w['id']:<12}  {attrs.get('name',''):<50}  {campus}")
         _emit(lines, f"\nTotal: {len(workflows)} workflows")
+
+    # --- Forms ---
+    _emit(lines, "\n\n=== Forms ===\n")
+    forms = _fetch_all("forms", auth, lines)
+    if not forms:
+        _emit(lines, "No forms found.")
+    else:
+        _emit(lines, f"{'ID':<12}  {'Name':<50}  Active")
+        _emit(lines, "-" * 70)
+        for f in forms:
+            attrs = f.get("attributes", {})
+            active = "yes" if attrs.get("active") else "no"
+            _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<50}  {active}")
+        _emit(lines, f"\nTotal: {len(forms)} forms")
+
+    # --- Custom Fields ---
+    _emit(lines, "\n\n=== Custom Fields ===\n")
+    fields = _fetch_all("field_definitions", auth, lines)
+    if not fields:
+        _emit(lines, "No field definitions found.")
+    else:
+        _emit(lines, f"{'ID':<12}  {'Name':<40}  Field Type")
+        _emit(lines, "-" * 70)
+        for f in fields:
+            attrs = f.get("attributes", {})
+            _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<40}  {attrs.get('field_type','')}")
+        _emit(lines, f"\nTotal: {len(fields)} field definitions")
 
     out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -140,7 +135,7 @@ def main():
     print(f"\nSaved to: {out_path}")
 
     confirm_with_file_link(
-        "Field definitions and workflows written.",
+        "Workflows, forms, and field definitions written.",
         out_path,
         title="PCP IDs",
         buttons=["OK"],

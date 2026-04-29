@@ -45,7 +45,7 @@ TABS = [
         "trigger_field": "trigger",
     },
     {
-        "title":         "Complete Workflows on Form",
+        "title":         "Delete from Workflow on Form",
         "key":           "form_completion_rules",
         "cols":          ["description", "form_id", "complete_workflow_id"],
         "labels":        {
