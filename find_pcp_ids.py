@@ -78,6 +78,29 @@ def _fetch_all(endpoint: str, auth: tuple, lines: list[str]) -> list[dict]:
     return items
 
 
+def fetch_pcp_ids() -> dict:
+    """Return {pcp_workflow, pcp_form, pcp_field} as lists of {id, name} dicts."""
+    print("Fetching PCP credentials...")
+    app_id = _get_secret("PCP_APP_ID")
+    secret = _get_secret("PCP_SECRET")
+    auth = (app_id, secret)
+    dummy: list[str] = []
+    print("Fetching PCP workflows...")
+    workflows = _fetch_all("workflows", auth, dummy)
+    print(f"  {len(workflows)} workflows")
+    print("Fetching PCP forms...")
+    forms = _fetch_all("forms", auth, dummy)
+    print(f"  {len(forms)} forms")
+    print("Fetching PCP field definitions...")
+    fields = _fetch_all("field_definitions", auth, dummy)
+    print(f"  {len(fields)} field definitions")
+    return {
+        "pcp_workflow": [{"id": w["id"], "name": w["attributes"].get("name", "")} for w in workflows],
+        "pcp_form":     [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in forms],
+        "pcp_field":    [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in fields],
+    }
+
+
 def main():
     if not _project_id:
         print("ERROR: CLOUD_PROJECT_ID not set in .env")

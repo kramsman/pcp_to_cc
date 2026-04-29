@@ -27,6 +27,13 @@
       "field_id": "1038799",
       "trigger": "completed",
       "value": "Member"
+    },
+    {
+      "description": "TEST- test workflow entered set TempImportField to TTEESSTT",
+      "workflow_id": "732146",
+      "field_id": "1041878",
+      "trigger": "entered",
+      "value": "TTEESSTT"
     }
   ],
   "workflow_chain_rules": [
@@ -68,6 +75,12 @@
       "pcp_field_id": "1039158",
       "pcp_value": "Social Justice",
       "cc_list_id": "3701fc00-8ca9-11ed-946d-fa163e57b7cb"
+    },
+    {
+      "description": "TEST - spirituality > democracy list",
+      "pcp_field_id": "1039158",
+      "pcp_value": "spirituality",
+      "cc_list_id": "37625f5c-ac05-11ed-a8e1-fa163e37306a"
     }
   ]
 }

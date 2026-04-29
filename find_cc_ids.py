@@ -96,6 +96,32 @@ def _emit(lines: list[str], text: str) -> None:
     print(text)
 
 
+def fetch_cc_lists() -> list:
+    """Return list of {id, name} dicts for all CC contact lists."""
+    print("Fetching CC credentials...")
+    access_token = _get_secret("CC_ACCESS_TOKEN")
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+    lists = []
+    next_url = f"{CC_API_BASE}/contact_lists"
+    refreshed = False
+    print("Fetching CC contact lists...")
+    while next_url:
+        resp = requests.get(next_url, headers=headers, timeout=10)
+        if resp.status_code == 401 and not refreshed:
+            new_token = _refresh_cc_token()
+            if new_token:
+                headers["Authorization"] = f"Bearer {new_token}"
+                refreshed = True
+                continue
+            break
+        resp.raise_for_status()
+        data = resp.json()
+        lists.extend(data.get("lists", []))
+        next_url = (data.get("_links") or {}).get("next", {}).get("href")
+    print(f"  {len(lists)} CC lists")
+    return [{"id": l["list_id"], "name": l.get("name", "")} for l in lists]
+
+
 def main():
     if not _project_id:
         print("ERROR: CLOUD_PROJECT_ID not set in .env")

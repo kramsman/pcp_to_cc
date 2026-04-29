@@ -16,6 +16,16 @@ from PySide6.QtWidgets import (
 
 RULES_FILE = Path(__file__).parent / "rules.json"
 
+DROPDOWN_FIELDS = {
+    "workflow_id":          "pcp_workflow",
+    "add_to_workflow_id":   "pcp_workflow",
+    "complete_workflow_id": "pcp_workflow",
+    "field_id":             "pcp_field",
+    "pcp_field_id":         "pcp_field",
+    "form_id":              "pcp_form",
+    "cc_list_id":           "cc_list",
+}
+
 TABS = [
     {
         "title":         "Set PCP Field Values",
@@ -73,15 +83,30 @@ TABS = [
 
 
 class RuleDialog(QDialog):
-    def __init__(self, tab: dict, initial: dict, parent=None):
+    def __init__(self, tab: dict, initial: dict, api_data: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Rule" if initial else "Add Rule")
         self.setMinimumWidth(950)
         layout = QFormLayout(self)
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self._entries = {}
+        self._id_dropdown_cols: set = set()
         for col in tab["cols"]:
-            if col == tab.get("trigger_field"):
+            api_key = DROPDOWN_FIELDS.get(col)
+            items = api_data.get(api_key, []) if api_key else []
+            if items:
+                widget = QComboBox()
+                for item in items:
+                    widget.addItem(f"{item['name']} ({item['id']})", item["id"])
+                existing_id = initial.get(col, "")
+                idx = next((i for i in range(widget.count()) if widget.itemData(i) == existing_id), -1)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+                elif existing_id:
+                    widget.insertItem(0, f"⚠ Unknown: {existing_id}", existing_id)
+                    widget.setCurrentIndex(0)
+                self._id_dropdown_cols.add(col)
+            elif col == tab.get("trigger_field"):
                 widget = QComboBox()
                 widget.addItems(["entered", "completed"])
                 widget.setCurrentText(initial.get(col, "entered"))
@@ -97,15 +122,21 @@ class RuleDialog(QDialog):
     def values(self) -> dict:
         result = {}
         for col, w in self._entries.items():
-            result[col] = w.currentText() if isinstance(w, QComboBox) else w.text().strip()
+            if col in self._id_dropdown_cols:
+                result[col] = w.currentData() or ""
+            elif isinstance(w, QComboBox):
+                result[col] = w.currentText()
+            else:
+                result[col] = w.text().strip()
         return result
 
 
 class TabWidget(QWidget):
-    def __init__(self, tab: dict, rules: list, parent=None):
+    def __init__(self, tab: dict, rules: list, api_data: dict, parent=None):
         super().__init__(parent)
         self.tab = tab
         self.rules = rules
+        self._api_data = api_data
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, len(tab["cols"]))
         self.table.setHorizontalHeaderLabels([tab["labels"][c] for c in tab["cols"]])
@@ -135,7 +166,7 @@ class TabWidget(QWidget):
                 self.table.setItem(row, ci, QTableWidgetItem(rule.get(col, "")))
 
     def _add(self):
-        dlg = RuleDialog(self.tab, {}, self)
+        dlg = RuleDialog(self.tab, {}, self._api_data, self)
         if dlg.exec():
             self.rules.append(dlg.values())
             self._refresh()
@@ -144,7 +175,7 @@ class TabWidget(QWidget):
         row = self.table.currentRow()
         if row < 0:
             return
-        dlg = RuleDialog(self.tab, self.rules[row], self)
+        dlg = RuleDialog(self.tab, self.rules[row], self._api_data, self)
         if dlg.exec():
             self.rules[row] = dlg.values()
             self._refresh()
@@ -183,10 +214,21 @@ class RuleEditor(QWidget):
         with open(RULES_FILE) as f:
             data = json.load(f)
         self.rules = {tab["key"]: list(data[tab["key"]]) for tab in TABS}
+        print("Loading API data for dropdowns...")
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from find_pcp_ids import fetch_pcp_ids
+            from find_cc_ids import fetch_cc_lists
+            api_data = fetch_pcp_ids()
+            api_data["cc_list"] = fetch_cc_lists()
+            print("API data ready.")
+        except Exception as e:
+            print(f"Warning: could not load API data ({e}); ID fields will be plain text.")
+            api_data = {}
         layout = QVBoxLayout(self)
         nb = QTabWidget()
         for tab in TABS:
-            nb.addTab(TabWidget(tab, self.rules[tab["key"]]), tab["title"])
+            nb.addTab(TabWidget(tab, self.rules[tab["key"]], api_data), tab["title"])
         layout.addWidget(nb)
         btn_row = QHBoxLayout()
         btn_row.addStretch()

@@ -575,7 +575,7 @@ def apply_rules(person: dict) -> list[str]:
         field_id      = rule["pcp_field_id"]
         actual_values = custom_fields.get(str(field_id), [])
         pcp_value     = rule["pcp_value"]
-        if pcp_value and any(pcp_value in v for v in actual_values):
+        if pcp_value and any(pcp_value.lower() in v.lower() for v in actual_values):
             valid_list_ids = [lid for lid in rule["cc_lists"] if lid]
             matched.update(valid_list_ids)
             logger.info(f"Rule matched: '{rule['description']}' → {valid_list_ids}")
