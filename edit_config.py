@@ -8,6 +8,7 @@ _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uv
 if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QFormLayout,
@@ -214,22 +215,13 @@ class RuleEditor(QWidget):
         with open(RULES_FILE) as f:
             data = json.load(f)
         self.rules = {tab["key"]: list(data[tab["key"]]) for tab in TABS}
-        print("Loading API data for dropdowns...")
-        try:
-            sys.path.insert(0, str(Path(__file__).parent))
-            from find_pcp_ids import fetch_pcp_ids
-            from find_cc_ids import fetch_cc_lists
-            api_data = fetch_pcp_ids()
-            api_data["cc_list"] = fetch_cc_lists()
-            print("API data ready.")
-        except Exception as e:
-            print(f"Warning: could not load API data ({e}); ID fields will be plain text.")
-            api_data = {}
+        self._api_data = {}  # populated by _fetch_api_data; shared by all TabWidgets
         layout = QVBoxLayout(self)
         nb = QTabWidget()
         for tab in TABS:
-            nb.addTab(TabWidget(tab, self.rules[tab["key"]], api_data), tab["title"])
+            nb.addTab(TabWidget(tab, self.rules[tab["key"]], self._api_data), tab["title"])
         layout.addWidget(nb)
+        QTimer.singleShot(0, self._fetch_api_data)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         save_btn = QPushButton("Save")
@@ -239,6 +231,21 @@ class RuleEditor(QWidget):
         btn_row.addWidget(save_btn)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
+
+    def _fetch_api_data(self):
+        self.setWindowTitle("Rule Editor  (loading IDs…)")
+        print("Loading API data for dropdowns...")
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from find_pcp_ids import fetch_pcp_ids
+            from find_cc_ids import fetch_cc_lists
+            data = fetch_pcp_ids()
+            data["cc_list"] = fetch_cc_lists()
+            self._api_data.update(data)
+            print("API data ready.")
+        except BaseException as e:
+            print(f"Warning: could not load API data ({e}); ID fields will be plain text.")
+        self.setWindowTitle("Rule Editor")
 
     def _save(self):
         with open(RULES_FILE) as f:
