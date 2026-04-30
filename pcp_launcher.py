@@ -6,6 +6,7 @@ Run this script to pick and launch one of the available tools.
 """
 import os
 import sys
+import time
 import subprocess
 from pathlib import Path
 
@@ -94,8 +95,34 @@ def main() -> None:
     for name, info in TOOLS.items():
         if choice.lower() == name.lower():
             if info.get("detach"):
-                subprocess.Popen([sys.executable, str(info["script"])],
-                                 start_new_session=True)
+                log_path = info["script"].parent / f"{info['script'].stem}.log"
+                log_file = open(log_path, "w", buffering=1)
+                proc = subprocess.Popen(
+                    [sys.executable, "-u", str(info["script"])],
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    cwd=str(info["script"].parent),
+                )
+                print(f"Launched {info['script'].name} — log at {log_path}\n")
+                # Relay child's log to this console until it signals the
+                # window is about to open, then exit so the launcher's
+                # QApplication is gone before the child creates its own.
+                sentinel = "Done. Opening editor window."
+                with open(log_path, "r") as log_read:
+                    deadline = time.time() + 180
+                    while time.time() < deadline:
+                        line = log_read.readline()
+                        if line:
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                            if sentinel in line:
+                                break
+                        else:
+                            if proc.poll() is not None:
+                                break
+                            time.sleep(0.1)
             else:
                 subprocess.run([sys.executable, str(info["script"])], check=False)
             return
