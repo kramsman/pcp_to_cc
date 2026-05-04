@@ -18,13 +18,15 @@ from PySide6.QtWidgets import (
 RULES_FILE = Path(__file__).parent / "rules.json"
 
 DROPDOWN_FIELDS = {
-    "workflow_id":          "pcp_workflow",
-    "add_to_workflow_id":   "pcp_workflow",
-    "complete_workflow_id": "pcp_workflow",
-    "field_id":             "pcp_field",
-    "pcp_field_id":         "pcp_field",
-    "form_id":              "pcp_form",
-    "cc_list_id":           "cc_list",
+    "workflow_id":           "pcp_workflow",
+    "add_to_workflow_id":    "pcp_workflow",
+    "complete_workflow_id":  "pcp_workflow",
+    "trigger_workflow_id":   "pcp_workflow",
+    "displaces_workflow_id": "pcp_workflow",
+    "field_id":              "pcp_field",
+    "pcp_field_id":          "pcp_field",
+    "form_id":               "pcp_form",
+    "cc_list_id":            "cc_list",
 }
 
 TABS = [
@@ -56,7 +58,7 @@ TABS = [
         "trigger_field": "trigger",
     },
     {
-        "title":         "Delete from Workflow on Form",
+        "title":         "Complete Workflow on Form",
         "key":           "form_completion_rules",
         "cols":          ["description", "form_id", "complete_workflow_id"],
         "labels":        {
@@ -66,6 +68,23 @@ TABS = [
         },
         "widths":        [375, 150, 175],
         "trigger_field": None,
+    },
+    {
+        "title":         "Assign to PCP Workflows",
+        "key":           "pcp_workflow_rules",
+        "cols":          ["description", "pcp_field_id", "pcp_value",
+                          "workflow_id", "trigger_workflow_id", "displaces_workflow_id"],
+        "labels":        {
+            "description":           "Description",
+            "pcp_field_id":          "PCP Field",
+            "pcp_value":             "PCP Field Contains",
+            "workflow_id":           "Assign to PCP Workflow",
+            "trigger_workflow_id":   "Trigger when entering (optional)",
+            "displaces_workflow_id": "Remove from (optional)",
+        },
+        "widths":        [300, 110, 110, 150, 175, 150],
+        "trigger_field": None,
+        "optional_cols": ["trigger_workflow_id", "displaces_workflow_id"],
     },
     {
         "title":         "Assign to CC Lists",
@@ -123,11 +142,14 @@ class RuleDialog(QDialog):
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self._entries = {}
         self._id_dropdown_cols: set = set()
+        optional_cols = set(tab.get("optional_cols", []))
         for col in tab["cols"]:
             api_key = DROPDOWN_FIELDS.get(col)
             items = _api_cache.get(api_key, []) if api_key else []
             if items:
                 widget = QComboBox()
+                if col in optional_cols:
+                    widget.addItem("(none)", "")
                 for item in items:
                     widget.addItem(f"{item['name']} ({item['id']})", item["id"])
                 existing_id = initial.get(col, "")

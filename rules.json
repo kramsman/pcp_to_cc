@@ -56,6 +56,24 @@
       "complete_workflow_id": "725397"
     }
   ],
+  "pcp_workflow_rules": [
+    {
+      "description": "Relationship contains 'membership' > Should Person go to Mem in Process",
+      "pcp_field_id": "1039160",
+      "pcp_value": "membership",
+      "workflow_id": "736375",
+      "trigger_workflow_id": "",
+      "displaces_workflow_id": ""
+    },
+    {
+      "description": "Relationship contains 'membership' > Should Person go to Mem in Process",
+      "pcp_field_id": "1039160",
+      "pcp_value": "membership",
+      "workflow_id": "736375",
+      "trigger_workflow_id": "",
+      "displaces_workflow_id": ""
+    }
+  ],
   "cc_list_rules": [
     {
       "description": "Newsletter opt-in \u2192 newsletter list",

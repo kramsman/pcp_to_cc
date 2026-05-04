@@ -505,9 +505,15 @@ def update_secret(secret_id: str, value: str) -> None:
     """
     parent  = f"projects/{config.CLOUD_PROJECT_ID}/secrets/{secret_id}"
     payload = secretmanager.SecretPayload(data=value.encode("UTF-8"))
-    _get_secret_client().add_secret_version(request={"parent": parent, "payload": payload})
-    _secrets[secret_id] = value  # keep cache in sync
-    logger.debug(f"Secret '{secret_id}' updated in Secret Manager")
+    try:
+        _get_secret_client().add_secret_version(request={"parent": parent, "payload": payload})
+        logger.debug(f"Secret '{secret_id}' updated in Secret Manager")
+    except Exception as e:
+        # Gracefully degrade: log the IAM/API error but still update in-memory cache
+        # so the refreshed token works for this Cloud Run instance's lifetime.
+        # Fix: grant roles/secretmanager.secretVersionAdder to pcp-to-cc-sa on this secret.
+        logger.error(f"update_secret: could not write '{secret_id}' to Secret Manager ({e}) — token cached in memory only")
+    _secrets[secret_id] = value  # always update cache, even if Secret Manager write failed
 
 
 # ─── PCP API ──────────────────────────────────────────────────────────────────
@@ -583,6 +589,34 @@ def apply_rules(person: dict) -> list[str]:
             logger.info(f"Rule not matched: '{rule['description']}' (field_id={field_id}, got {actual_values}, want '{pcp_value}')")
 
     return list(matched)
+
+
+def apply_workflow_rules(person: dict, trigger_workflow_id: str = "") -> list[dict]:
+    """
+    Walk PCP_WORKFLOW_RULES and return matching rule dicts (so the caller has
+    access to displaces_workflow_id etc). Only rules whose trigger_workflow_id
+    matches the argument are considered:
+      - trigger_workflow_id="" → run rules with no trigger set (person events)
+      - trigger_workflow_id="731975" → run rules scoped to that workflow's
+        card.created event (override-on-entry rules)
+    """
+    matched: list[dict] = []
+    custom_fields = person.get("custom_fields", {})
+
+    for rule in config.PCP_WORKFLOW_RULES:
+        if rule.get("trigger_workflow_id", "") != trigger_workflow_id:
+            continue
+        field_id      = rule["pcp_field_id"]
+        actual_values = custom_fields.get(str(field_id), [])
+        pcp_value     = rule["pcp_value"]
+        if pcp_value and any(pcp_value.lower() in v.lower() for v in actual_values):
+            if rule.get("workflow_id"):
+                matched.append(rule)
+                logger.info(f"PCP workflow rule matched: '{rule['description']}' → workflow {rule['workflow_id']}")
+        else:
+            logger.info(f"PCP workflow rule not matched: '{rule['description']}' (field_id={field_id}, got {actual_values}, want '{pcp_value}')")
+
+    return matched
 
 
 # ─── Constant Contact API ─────────────────────────────────────────────────────
@@ -793,11 +827,25 @@ def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
 
 
 def add_to_workflow(person_id: str, workflow_id: str) -> bool:
+    """Add person to workflow. Skips if person already has an active (non-removed,
+    non-completed) card in the workflow."""
     if config.TEST_MODE:
         logger.info(f"TEST_MODE — would add person {person_id} to workflow {workflow_id}")
         return True
     try:
         auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+        existing = requests.get(
+            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
+            params={"where[person_id]": person_id},
+            auth=auth, timeout=10,
+        )
+        existing.raise_for_status()
+        active = [c for c in existing.json().get("data", [])
+                  if c.get("attributes", {}).get("removed_at") is None
+                  and c.get("attributes", {}).get("stage") != "completed"]
+        if active:
+            logger.info(f"add_to_workflow: person {person_id} already active in workflow {workflow_id} — skipping")
+            return True
         url  = f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards"
         body = {"data": {"type": "WorkflowCard",
                          "relationships": {"person": {"data": {"type": "Person", "id": person_id}}}}}
@@ -861,6 +909,14 @@ def webhook():
         logger.info("Webhook GET verification request received")
         return jsonify({"status": "ok"}), 200
 
+    try:
+        return _handle_webhook_post()
+    except Exception as exc:
+        logger.exception(f"Unhandled exception in webhook handler: {exc}")
+        return jsonify({"error": "internal error"}), 500
+
+
+def _handle_webhook_post():
     payload = request.get_json(silent=True)
 
     if config.LOG_PAYLOADS:
@@ -881,6 +937,15 @@ def webhook():
     event_name = event.event_name
     global _payloads
     _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
+
+    # ── Early-exit for events that never require action ───────────────────────
+    _IGNORE_EVENTS = {
+        "people.v2.events.person.destroyed",
+        "people.v2.events.workflow_step.updated",
+    }
+    if event_name in _IGNORE_EVENTS:
+        logger.info(f"Ignored event (no action needed): {event_name}")
+        return jsonify({"status": "ignored", "event": event_name}), 200
 
     # ── Workflow card events — set custom fields ──────────────────────────────
     _WORKFLOW_CARD_EVENTS = {
@@ -914,6 +979,24 @@ def webhook():
             matched = True
             add_to_workflow(person_id, rule["add_to_workflow_id"])
             logger.info(f"Workflow chain rule applied: '{rule['description']}'")
+
+        # PCP workflow override: on entry to a workflow, if a field-based
+        # override rule matches, redirect to the rule's target workflow.
+        # Field values are guaranteed settled by the time card.created fires,
+        # which avoids the form-submission eventual-consistency race.
+        if event_name == "people.v2.events.workflow_card.created":
+            pcp_data = fetch_person_from_pcp(person_id)
+            if pcp_data:
+                person = parse_person(pcp_data)
+                for rule in apply_workflow_rules(person, trigger_workflow_id=workflow_id):
+                    matched = True
+                    add_to_workflow(person_id, rule["workflow_id"])
+                    if rule.get("displaces_workflow_id"):
+                        complete_workflow_for_person(
+                            person_id, rule["displaces_workflow_id"],
+                            reason=f"Replaced by automation rule: {rule['description']}",
+                        )
+                    logger.info(f"PCP workflow override applied: '{rule['description']}'")
 
         if not matched:
             logger.info(f"No workflow rules matched workflow_id={workflow_id} trigger={trigger}")
@@ -970,9 +1053,21 @@ def webhook():
         logger.info(f"Skipped {name_display}: no email address")
         return jsonify({"status": "skipped", "reason": "no email"}), 200
 
-    # ── Apply rules ───────────────────────────────────────────────────────────
+    # ── Apply PCP workflow rules (only rules with no trigger_workflow_id) ─────
+    # Rules WITH a trigger_workflow_id fire from the workflow_card.created
+    # block instead, where field values are guaranteed to be settled.
+    workflow_rules = apply_workflow_rules(person, trigger_workflow_id="")
+    for rule in workflow_rules:
+        add_to_workflow(person_id, rule["workflow_id"])
+        if rule.get("displaces_workflow_id"):
+            complete_workflow_for_person(
+                person_id, rule["displaces_workflow_id"],
+                reason=f"Replaced by automation rule: {rule['description']}",
+            )
+
+    # ── Apply CC list rules ───────────────────────────────────────────────────
     list_ids = apply_rules(person)
-    if not list_ids:
+    if not list_ids and not workflow_rules:
         logger.info(f"Skipped {name_display}: no rules matched")
         return jsonify({"status": "skipped", "reason": "no rules matched"}), 200
 
@@ -1018,6 +1113,7 @@ def settings():
         "WORKFLOW_FIELD_RULES":   config.WORKFLOW_FIELD_RULES,
         "WORKFLOW_CHAIN_RULES":   config.WORKFLOW_CHAIN_RULES,
         "FORM_COMPLETION_RULES":  config.FORM_COMPLETION_RULES,
+        "PCP_WORKFLOW_RULES":     config.PCP_WORKFLOW_RULES,
     }), 200
 
 

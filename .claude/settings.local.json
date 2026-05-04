@@ -17,7 +17,8 @@
       "Bash(/Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pcp_to_cc_root/.venv/bin/python -c \"import main\")",
       "Bash(uv pip *)",
       "Bash(git *)",
-      "Bash(.venv/bin/pytest *)"
+      "Bash(.venv/bin/pytest *)",
+      "Bash(python *)"
     ]
   }
 }
