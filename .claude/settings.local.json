@@ -18,7 +18,9 @@
       "Bash(uv pip *)",
       "Bash(git *)",
       "Bash(.venv/bin/pytest *)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(xargs cat *)"
     ]
   }
 }

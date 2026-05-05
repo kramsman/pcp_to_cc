@@ -60,6 +60,15 @@ TOOLS = {
         ),
         "detach": False,
     },
+    "Workflow Cards Report": {
+        "script": ROOT_PATH / "pcp_workflow_report.py",
+        "description": (
+            "Report every active workflow card across all PCP workflows.\n"
+            "Writes a CSV with workflow, step, person, assignee, snoozed,\n"
+            "overdue, and last-updated columns."
+        ),
+        "detach": False,
+    },
     "Edit Config": {
         "script": ROOT_PATH / "edit_config.py",
         "description": (
