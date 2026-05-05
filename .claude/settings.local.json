@@ -20,7 +20,8 @@
       "Bash(.venv/bin/pytest *)",
       "Bash(python *)",
       "Bash(grep -E \"\\\\.py$\")",
-      "Bash(xargs cat *)"
+      "Bash(xargs cat *)",
+      "Bash(awk -F',' 'NR>1 {print $1, $5}' pcp_workflow_report_20260505_171058.csv)"
     ]
   }
 }

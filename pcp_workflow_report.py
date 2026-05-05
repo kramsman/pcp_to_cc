@@ -34,6 +34,20 @@ PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 USER_AGENT = "pcp_to_cc (office2@4thu.org)"
 PER_PAGE = 100
 
+# Edit this to control workflow sort order. Lower number = higher priority.
+# Workflows not listed get DEFAULT_WORKFLOW_PRIORITY and sort alphabetically after the listed ones.
+WORKFLOW_PRIORITY: dict[str, int] = {
+    "Membership In Process": 1,
+    "Should Person go to Membership in Process": 2,
+    "Membership Ceremony": 3,
+    "Explorer": 4,
+    "Visitor": 5,
+}
+DEFAULT_WORKFLOW_PRIORITY = 999
+
+# When True, drop rows whose person last name is "test" (case-insensitive).
+FILTER_TEST_PROFILES = True
+
 _project_id = os.environ.get("CLOUD_PROJECT_ID", "")
 _secret_client = None
 _secret_cache: dict[str, str] = {}
@@ -153,7 +167,6 @@ def build_rows(workflows: list[dict], auth: tuple) -> list[dict]:
             # Defensive: skip removed/completed even though endpoint should exclude them
             if attrs.get("removed_at") or attrs.get("completed_at"):
                 continue
-            active += 1
 
             person_id = _rel_id(card, "person")
             assignee_id = _rel_id(card, "assignee")
@@ -162,6 +175,10 @@ def build_rows(workflows: list[dict], auth: tuple) -> list[dict]:
             assignee = included_idx.get(("Person", assignee_id)) if assignee_id else None
             step = included_idx.get(("WorkflowStep", step_id)) if step_id else None
             step_name = (step.get("attributes", {}).get("name", "") if step else "") or ""
+
+            if FILTER_TEST_PROFILES and _person_attr(person, "last_name").strip().lower() == "test":
+                continue
+            active += 1
 
             snooze_until = attrs.get("snooze_until")
             rows.append({
@@ -206,11 +223,15 @@ def main() -> None:
 
     df = pd.DataFrame(rows)
     if not df.empty:
+        df["_wf_priority"] = df["workflow_name"].map(
+            lambda n: WORKFLOW_PRIORITY.get(n, DEFAULT_WORKFLOW_PRIORITY)
+        )
         df = df.sort_values(
-            by=["snoozed", "workflow_name", "step_name", "person_name"],
-            ascending=[True, True, True, True],
+            by=["snoozed", "_wf_priority", "workflow_name", "step_name", "person_name"],
+            ascending=[True, True, True, True, True],
             kind="stable",
         ).reset_index(drop=True)
+        df = df.drop(columns=["_wf_priority"])
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     full_path = Path(__file__).with_name(f"pcp_workflow_report_{timestamp}_full.csv")
@@ -222,8 +243,6 @@ def main() -> None:
         "snoozed", "snooze_until", "overdue",
         "person_name", "workflow_name", "step_name", "assignee_name",
         "person_created_at", "person_updated_at",
-        "last_updated", "created_at", "moved_to_step_at",
-        "completed_at", "removed_at",
     ]
     trimmed = df[[c for c in output_cols if c in df.columns]]
     trimmed.to_csv(out_path, index=False)
