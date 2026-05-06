@@ -173,4 +173,4 @@ cython_debug/
 /cc_list_ids.txt
 /find_cc_ids.txt
 /find_pcp_ids.txt
-/.google_creds/credentials.json
+/.google_creds/token.json
