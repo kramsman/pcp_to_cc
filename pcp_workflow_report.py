@@ -20,6 +20,7 @@ from google.api_core import retry as api_retry
 from google.cloud import secretmanager
 from bekgoogle import ensure_adc_auth
 from bekgoogle.create_google_services import create_google_services
+from uvbekutils.pyautobek import confirm_with_file_link
 
 load_dotenv()
 
@@ -330,6 +331,18 @@ def main() -> None:
     _write_tab(sheet_service, sheet_id, TAB_ACTIVE,  tab_ids[TAB_ACTIVE],  active_df,  output_cols, timestamp_str)
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
+
+    confirm_with_file_link(
+        f"Workflow cards report updated.\n\n"
+        f"  overdue: {len(overdue_df)}\n"
+        f"  snoozed: {len(snoozed_df)}\n"
+        f"  active:  {len(active_df)}\n\n"
+        f"Click the link below to open the Google Sheet.",
+        GOOGLE_SHEET_URL,
+        title="Workflow Cards Report",
+        buttons=["OK"],
+        close_on_link_click=True,
+    )
 
 
 if __name__ == "__main__":
