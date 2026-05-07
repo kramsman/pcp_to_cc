@@ -130,10 +130,40 @@ def _df_to_values(df: pd.DataFrame, headers: list[str]) -> list[list]:
     return rows
 
 
+def _get_tab_ids(sheet_service, sheet_id: str, tab_names: list[str]) -> dict[str, int]:
+    """Return {tab_name: numeric_sheet_id}, creating any missing tabs.
+
+    Matches existing tabs case-insensitively (Google enforces case-insensitive uniqueness).
+    """
+    meta = sheet_service.spreadsheets().get(spreadsheetId=sheet_id).execute()
+    norm_to_id = {
+        s["properties"]["title"].strip().lower(): s["properties"]["sheetId"]
+        for s in meta["sheets"]
+    }
+    result: dict[str, int] = {}
+    missing: list[str] = []
+    for n in tab_names:
+        key = n.strip().lower()
+        if key in norm_to_id:
+            result[n] = norm_to_id[key]
+        else:
+            missing.append(n)
+    if missing:
+        add_requests = [{"addSheet": {"properties": {"title": n}}} for n in missing]
+        resp = sheet_service.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id, body={"requests": add_requests}
+        ).execute()
+        for n, reply in zip(missing, resp.get("replies", [])):
+            result[n] = reply["addSheet"]["properties"]["sheetId"]
+        print(f"  Created tabs: {missing}")
+    return result
+
+
 def _write_tab(
     sheet_service,
     sheet_id: str,
     tab_name: str,
+    tab_numeric_id: int,
     df: pd.DataFrame,
     headers: list[str],
     timestamp_str: str,
@@ -154,6 +184,30 @@ def _write_tab(
         range=f"'{tab_name}'!{DATA_START_CELL}",
         valueInputOption="RAW",
         body={"values": _df_to_values(df, headers)},
+    ).execute()
+    ss.batchUpdate(
+        spreadsheetId=sheet_id,
+        body={"requests": [
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": tab_numeric_id,
+                        "gridProperties": {"frozenRowCount": 5},
+                    },
+                    "fields": "gridProperties.frozenRowCount",
+                }
+            },
+            {
+                "autoResizeDimensions": {
+                    "dimensions": {
+                        "sheetId": tab_numeric_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": 0,
+                        "endIndex": len(headers),
+                    }
+                }
+            },
+        ]},
     ).execute()
     print(f"  {tab_name}: {len(df)} rows")
 
@@ -192,6 +246,10 @@ def main() -> None:
         for card in cards:
             attrs = card.get("attributes", {})
             rels = card.get("relationships", {})
+
+            stage = (attrs.get("stage") or "").lower()
+            if stage in ("completed", "removed"):
+                continue
 
             person_rel = (rels.get("person") or {}).get("data") or {}
             person_id = person_rel.get("id")
@@ -248,10 +306,10 @@ def main() -> None:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = Path(__file__).parent
     df.drop(columns=["_wf_priority"]).to_excel(
-        script_dir / f"pcp_workflow_report_{ts}_full.xlsx", engine="openpyxl", index=False
+        script_dir / f"pcp_workflow_report_full.xlsx", engine="openpyxl", index=False
     )
     trimmed.to_excel(
-        script_dir / f"pcp_workflow_report_{ts}.xlsx", engine="openpyxl", index=False
+        script_dir / f"pcp_workflow_report.xlsx", engine="openpyxl", index=False
     )
     print(f"Debug XLSX written ({ts})")
 
@@ -266,9 +324,10 @@ def main() -> None:
 
     print("\nWriting to Google Sheet...")
     _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
-    _write_tab(sheet_service, sheet_id, TAB_OVERDUE, overdue_df, output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_SNOOZED, snoozed_df, output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,  active_df,  output_cols, timestamp_str)
+    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE])
+    _write_tab(sheet_service, sheet_id, TAB_OVERDUE, tab_ids[TAB_OVERDUE], overdue_df, output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_SNOOZED, tab_ids[TAB_SNOOZED], snoozed_df, output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,  tab_ids[TAB_ACTIVE],  active_df,  output_cols, timestamp_str)
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
 
