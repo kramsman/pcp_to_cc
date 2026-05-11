@@ -29,6 +29,8 @@ GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Hy0Qr6FDeZlmrnsWOTdr
 TAB_OVERDUE = "overdue"
 TAB_SNOOZED = "snoozed"
 TAB_ACTIVE = "active"
+TAB_INTERESTED = "Interested"
+INTERESTED_WORKFLOWS = {"Membership In Process", "Should Person go to Membership in Process"}
 TIMESTAMP_CELL = "A3"
 DATA_START_CELL = "A5"
 CLEAR_RANGE_END = "Z10000"
@@ -320,24 +322,31 @@ def main() -> None:
     overdue_df = trimmed[overdue_mask]
     snoozed_df = trimmed[~overdue_mask & snoozed_mask]
     active_df  = trimmed[~overdue_mask & ~snoozed_mask]
+    interested_df = (
+        trimmed[trimmed["workflow_name"].isin(INTERESTED_WORKFLOWS)]
+        .sort_values(["snoozed", "overdue", "workflow_name"], ascending=[True, False, True])
+        .copy()
+    )
 
     timestamp_str = datetime.now().strftime("%Y-%m-%d %I:%M %p")
     sheet_id = _extract_sheet_id(GOOGLE_SHEET_URL)
 
     print("\nWriting to Google Sheet...")
     _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
-    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE])
-    _write_tab(sheet_service, sheet_id, TAB_OVERDUE, tab_ids[TAB_OVERDUE], overdue_df, output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_SNOOZED, tab_ids[TAB_SNOOZED], snoozed_df, output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,  tab_ids[TAB_ACTIVE],  active_df,  output_cols, timestamp_str)
+    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE, TAB_INTERESTED])
+    _write_tab(sheet_service, sheet_id, TAB_OVERDUE,    tab_ids[TAB_OVERDUE],    overdue_df,    output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_SNOOZED,    tab_ids[TAB_SNOOZED],    snoozed_df,    output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,     tab_ids[TAB_ACTIVE],     active_df,     output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_INTERESTED, tab_ids[TAB_INTERESTED], interested_df, output_cols, timestamp_str)
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
 
     confirm_with_file_link(
         f"Workflow cards report updated.\n\n"
-        f"  overdue: {len(overdue_df)}\n"
-        f"  snoozed: {len(snoozed_df)}\n"
-        f"  active:  {len(active_df)}\n\n"
+        f"  overdue:    {len(overdue_df)}\n"
+        f"  snoozed:    {len(snoozed_df)}\n"
+        f"  active:     {len(active_df)}\n"
+        f"  interested: {len(interested_df)}\n\n"
         f"Click the link below to open the Google Sheet.",
         GOOGLE_SHEET_URL,
         title="Workflow Cards Report",
