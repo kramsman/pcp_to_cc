@@ -39,8 +39,9 @@ WORKFLOW_PRIORITY = {
     "Membership In Process": 1,
     "Should Person go to Membership in Process": 2,
     "Membership Ceremony": 3,
-    "Explorer": 4,
-    "Visitor": 5,
+    "Get Contact Information": 4,
+    "Explorer": 5,
+    "Visitor": 6,
 }
 DEFAULT_WORKFLOW_PRIORITY = 999
 FILTER_TEST_PROFILES = True
