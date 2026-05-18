@@ -31,6 +31,7 @@ TAB_OVERDUE = "overdue"
 TAB_SNOOZED = "snoozed"
 TAB_ACTIVE = "active"
 TAB_INTERESTED = "Interested People"
+TAB_BLANK_MEM_STAGE = "Blank Mem Stage"
 INTERESTED_WORKFLOWS = {"Membership In Process", "Should Person go to Membership in Process"}
 TIMESTAMP_CELL = "A3"
 DATA_START_CELL = "A5"
@@ -328,6 +329,47 @@ def main() -> None:
     secret = _get_secret("PCP_SECRET")
     auth = (app_id, secret)
 
+    print("Fetching Membership Stage field definition...")
+    field_defs = _fetch_all(f"{PCP_API_BASE}/field_definitions", auth)
+    mem_stage_field_id = next(
+        (fd["id"] for fd in field_defs
+         if (fd.get("attributes", {}).get("name") or "").strip().lower() == "membership stage"),
+        None,
+    )
+    if not mem_stage_field_id:
+        print("  WARNING: 'Membership Stage' custom field not found in field definitions")
+
+    membership_stage_lookup: dict[str, str] = {}
+    person_lookup: dict[str, dict] = {}
+    if mem_stage_field_id:
+        print("Fetching all profiles with field data...")
+        all_people, all_included = _fetch_all_with_included(
+            f"{PCP_API_BASE}/people",
+            auth,
+            params={"include": "field_data", "per_page": 100},
+        )
+        fd_lookup = {item["id"]: item for item in all_included if item.get("type") == "FieldDatum"}
+        for person in all_people:
+            pid = person["id"]
+            person_lookup[pid] = person.get("attributes", {})
+            fd_ids = [
+                it.get("id") for it in
+                ((person.get("relationships") or {}).get("field_data") or {}).get("data") or []
+            ]
+            for fid in fd_ids:
+                fd_item = fd_lookup.get(fid)
+                if not fd_item:
+                    continue
+                fdef_id = (
+                    ((fd_item.get("relationships") or {}).get("field_definition") or {})
+                    .get("data", {}).get("id")
+                )
+                if fdef_id == mem_stage_field_id:
+                    membership_stage_lookup[pid] = (fd_item.get("attributes") or {}).get("value") or ""
+                    break
+        print(f"  {len(person_lookup)} profiles, "
+              f"{sum(1 for v in membership_stage_lookup.values() if v)} have a Membership Stage value")
+
     print("Fetching workflows...")
     workflows = _fetch_all(f"{PCP_API_BASE}/workflows", auth)
     print(f"  {len(workflows)} workflows")
@@ -391,12 +433,49 @@ def main() -> None:
                 "person_created_at": _fmt_date(person_attrs.get("created_at")),
                 "person_updated_at": _fmt_date(person_attrs.get("updated_at")),
                 "_wf_priority": WORKFLOW_PRIORITY.get(wf_name, DEFAULT_WORKFLOW_PRIORITY),
+                "_person_id": person_id or "",
+                "membership_stage": membership_stage_lookup.get(person_id, "") if person_id else "",
             })
 
     print(f"\n{len(rows)} total cards")
     if not rows:
         print("No workflow cards found.")
         return
+
+    if mem_stage_field_id:
+        workflow_pids = {r["_person_id"] for r in rows if r["_person_id"]}
+        added = 0
+        for pid, attrs in person_lookup.items():
+            if pid in workflow_pids:
+                continue
+            if attrs.get("child"):
+                continue
+            if (attrs.get("status") or "").lower() != "active":
+                continue
+            last = (attrs.get("last_name") or "")
+            if FILTER_TEST_PROFILES and last.lower() == "test":
+                continue
+            if membership_stage_lookup.get(pid, "") != "":
+                continue
+            first = (attrs.get("first_name") or "")
+            rows.append({
+                "workflow_name": "",
+                "step_name": "",
+                "person_name": f"{first} {last}".strip(),
+                "assignee_name": "",
+                "overdue": False,
+                "snoozed": False,
+                "snooze_until": "",
+                "person_created_at": _fmt_date(attrs.get("created_at")),
+                "person_updated_at": _fmt_date(attrs.get("updated_at")),
+                "_wf_priority": DEFAULT_WORKFLOW_PRIORITY,
+                "_person_id": pid,
+                "membership_stage": "",
+            })
+            added += 1
+        print(f"Added {added} non-workflow profiles with blank Membership Stage")
+        unique_stages = sorted({r["membership_stage"] for r in rows})
+        print(f"  Values seen: {unique_stages}")
 
     # ascending snoozed: False sorts before True, so non-snoozed cards appear first
     df = pd.DataFrame(rows).sort_values(
@@ -406,14 +485,14 @@ def main() -> None:
 
     output_cols = [
         "snoozed", "snooze_until", "overdue",
-        "person_name", "workflow_name", "step_name", "assignee_name",
+        "person_name", "membership_stage", "workflow_name", "step_name", "assignee_name",
         "person_created_at", "person_updated_at",
     ]
     trimmed = df[output_cols].copy()
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     script_dir = Path(__file__).parent
-    df.drop(columns=["_wf_priority"]).to_excel(
+    df.drop(columns=["_wf_priority", "_person_id"]).to_excel(
         script_dir / f"pcp_workflow_report_full.xlsx", engine="openpyxl", index=False
     )
     trimmed.to_excel(
@@ -421,14 +500,20 @@ def main() -> None:
     )
     print(f"Debug XLSX written ({ts})")
 
+    workflow_mask = trimmed["workflow_name"] != ""  # exclude non-workflow profiles from workflow tabs
     overdue_mask = trimmed["overdue"] == True
     snoozed_mask = trimmed["snoozed"] == True
-    overdue_df = trimmed[overdue_mask]
-    snoozed_df = trimmed[~overdue_mask & snoozed_mask]  # snoozed but not overdue
-    active_df  = trimmed[~overdue_mask & ~snoozed_mask]  # neither overdue nor snoozed
+    overdue_df = trimmed[workflow_mask & overdue_mask]
+    snoozed_df = trimmed[workflow_mask & ~overdue_mask & snoozed_mask]  # snoozed but not overdue
+    active_df  = trimmed[workflow_mask & ~overdue_mask & ~snoozed_mask]  # neither overdue nor snoozed
     interested_df = (
         trimmed[trimmed["workflow_name"].isin(INTERESTED_WORKFLOWS)]
         .sort_values(["snoozed", "overdue", "workflow_name"], ascending=[True, False, True])
+        .copy()
+    )
+    blank_mem_stage_df = (
+        trimmed[trimmed["membership_stage"] == ""]
+        .sort_values(["workflow_name", "step_name", "person_name"])
         .copy()
     )
 
@@ -437,20 +522,22 @@ def main() -> None:
 
     print("\nWriting to Google Sheet...")
     _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
-    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_INTERESTED, TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE])
-    _write_tab(sheet_service, sheet_id, TAB_INTERESTED, tab_ids[TAB_INTERESTED], interested_df, output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_OVERDUE,    tab_ids[TAB_OVERDUE],    overdue_df,    output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_SNOOZED,    tab_ids[TAB_SNOOZED],    snoozed_df,    output_cols, timestamp_str)
-    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,     tab_ids[TAB_ACTIVE],     active_df,     output_cols, timestamp_str)
+    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_INTERESTED, TAB_BLANK_MEM_STAGE, TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE])
+    _write_tab(sheet_service, sheet_id, TAB_INTERESTED,     tab_ids[TAB_INTERESTED],     interested_df,     output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_BLANK_MEM_STAGE, tab_ids[TAB_BLANK_MEM_STAGE], blank_mem_stage_df, output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_OVERDUE,         tab_ids[TAB_OVERDUE],         overdue_df,         output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_SNOOZED,         tab_ids[TAB_SNOOZED],         snoozed_df,         output_cols, timestamp_str)
+    _write_tab(sheet_service, sheet_id, TAB_ACTIVE,          tab_ids[TAB_ACTIVE],          active_df,          output_cols, timestamp_str)
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
 
     confirm_with_file_link(
         f"Workflow cards report updated.\n\n"
-        f"  overdue:    {len(overdue_df)}\n"
-        f"  snoozed:    {len(snoozed_df)}\n"
-        f"  active:     {len(active_df)}\n"
-        f"  interested: {len(interested_df)}\n\n"
+        f"  overdue:          {len(overdue_df)}\n"
+        f"  snoozed:          {len(snoozed_df)}\n"
+        f"  active:           {len(active_df)}\n"
+        f"  interested:       {len(interested_df)}\n"
+        f"  blank mem stage:  {len(blank_mem_stage_df)}\n\n"
         f"Click the link below to open the Google Sheet.",
         GOOGLE_SHEET_URL,
         title="Workflow Cards Report",
