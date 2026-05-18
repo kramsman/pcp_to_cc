@@ -33,6 +33,18 @@ TAB_ACTIVE = "active"
 TAB_INTERESTED = "Interested People"
 TAB_BLANK_MEM_STAGE = "Blank Mem Stage"
 INTERESTED_WORKFLOWS = {"Membership In Process", "Should Person go to Membership in Process"}
+PER_WORKFLOW_TABS = [
+    "Explorer",
+    "Get Contact Information",
+    "Get Phone Number",
+    "Initial Visitor Entered",
+    "Membership Ceremony",
+    "Membership In Process",
+    "Next Membership Ceremony",
+    "Regular Contributor",
+    "Should Person go to Membership in Process",
+    "Visitor",
+]
 TIMESTAMP_CELL = "A3"
 DATA_START_CELL = "A5"
 CLEAR_RANGE_END = "Z10000"
@@ -516,18 +528,29 @@ def main() -> None:
         .sort_values(["workflow_name", "step_name", "person_name"])
         .copy()
     )
+    per_workflow_dfs = {
+        name: (
+            trimmed[trimmed["workflow_name"] == name]
+            .sort_values(["snoozed", "overdue", "step_name", "person_name"], ascending=[True, False, True, True])
+            .copy()
+        )
+        for name in PER_WORKFLOW_TABS
+    }
 
     timestamp_str = datetime.now().strftime("%Y-%m-%d %I:%M %p")
     sheet_id = _extract_sheet_id(GOOGLE_SHEET_URL)
 
     print("\nWriting to Google Sheet...")
     _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
-    tab_ids = _get_tab_ids(sheet_service, sheet_id, [TAB_INTERESTED, TAB_BLANK_MEM_STAGE, TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE])
+    all_tab_names = [TAB_INTERESTED, TAB_BLANK_MEM_STAGE, TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE] + PER_WORKFLOW_TABS
+    tab_ids = _get_tab_ids(sheet_service, sheet_id, all_tab_names)
     _write_tab(sheet_service, sheet_id, TAB_INTERESTED,     tab_ids[TAB_INTERESTED],     interested_df,     output_cols, timestamp_str)
     _write_tab(sheet_service, sheet_id, TAB_BLANK_MEM_STAGE, tab_ids[TAB_BLANK_MEM_STAGE], blank_mem_stage_df, output_cols, timestamp_str)
     _write_tab(sheet_service, sheet_id, TAB_OVERDUE,         tab_ids[TAB_OVERDUE],         overdue_df,         output_cols, timestamp_str)
     _write_tab(sheet_service, sheet_id, TAB_SNOOZED,         tab_ids[TAB_SNOOZED],         snoozed_df,         output_cols, timestamp_str)
     _write_tab(sheet_service, sheet_id, TAB_ACTIVE,          tab_ids[TAB_ACTIVE],          active_df,          output_cols, timestamp_str)
+    for wf_name in PER_WORKFLOW_TABS:
+        _write_tab(sheet_service, sheet_id, wf_name, tab_ids[wf_name], per_workflow_dfs[wf_name], output_cols, timestamp_str)
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
 
