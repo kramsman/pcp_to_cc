@@ -9,6 +9,11 @@ Contact lists based on CC_LIST_RULES in config.py.
 Usage (local dev):
     python pcp_to_cc/main.py          # start Flask dev server
     python test_local.py              # send a test webhook in another terminal
+
+If you get an error "Gitupdater not found:
+  1. go into terminal
+  2. copy and enter: source .venv/bin/activate
+  3. then enter: uv pip install git+https://github.com/kramsman/gitupdater.git
 """
 
 import json
