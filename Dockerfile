@@ -14,6 +14,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Copy application code
 COPY pcp_to_cc/ pcp_to_cc/
 
+# Report script — entrypoint for the weekly pcp-workflow-report Cloud Run Job
+COPY pcp_workflow_report.py ./
+
 # Cloud Run sets PORT automatically; default to 8080
 ENV PORT=8080
 # Make config.py importable as 'config' (main.py uses: import config)

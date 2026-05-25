@@ -19,9 +19,10 @@ import requests
 from dotenv import load_dotenv
 from google.api_core import retry as api_retry
 from google.cloud import secretmanager
-from bekgoogle import ensure_adc_auth
-from bekgoogle.create_google_services import create_google_services
-from uvbekutils.pyautobek import confirm_with_file_link
+
+# bekgoogle and uvbekutils are imported lazily inside the local-only branches
+# below so the Cloud Run Job image (which has neither installed) never imports
+# them. See _reauth_adc, _build_sheets_service, and the popup guard in main().
 
 load_dotenv()
 
@@ -96,13 +97,46 @@ def _get_secret(secret_id: str) -> str:
         except Exception as e:
             if "Reauthentication is needed" in str(e):
                 # ADC token expired; refresh credentials and rebuild the client before retrying
-                ensure_adc_auth()
+                _reauth_adc()
                 _sm_client = secretmanager.SecretManagerServiceClient()
                 resp = _sm_client.access_secret_version(request={"name": name})
             else:
                 raise
         _secret_cache[secret_id] = resp.payload.data.decode("UTF-8")
     return _secret_cache[secret_id]
+
+
+def _reauth_adc() -> None:
+    """Refresh expired ADC credentials. Local-only; no-op on the Cloud Run Job.
+
+    On the Job (CLOUD_RUN_JOB set) the runtime service account's tokens are
+    refreshed automatically, so the interactive bekgoogle re-auth (which opens a
+    browser) would never apply and bekgoogle isn't installed in the image.
+    """
+    if os.environ.get("CLOUD_RUN_JOB"):
+        return
+    from bekgoogle import ensure_adc_auth
+    ensure_adc_auth()
+
+
+def _build_sheets_service() -> Any:
+    """Return an authenticated Google Sheets API service.
+
+    On the Cloud Run Job (CLOUD_RUN_JOB set) authenticates as the runtime
+    service account via ADC. Locally, falls back to the existing OAuth flow
+    backed by GOOGLE_CREDS_DIR via bekgoogle, so laptop runs are unchanged.
+
+    Returns:
+        A Sheets v4 API service resource.
+    """
+    if os.environ.get("CLOUD_RUN_JOB"):
+        import google.auth
+        from googleapiclient.discovery import build
+        creds, _ = google.auth.default(scopes=SHEETS_SCOPES)
+        return build("sheets", "v4", credentials=creds, cache_discovery=False)
+    from bekgoogle.create_google_services import create_google_services
+    _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
+    return sheet_service
 
 
 def _fetch_all_with_included(url: str, auth: tuple, params: dict | None = None) -> tuple[list[dict], list[dict]]:
@@ -541,7 +575,7 @@ def main() -> None:
     sheet_id = _extract_sheet_id(GOOGLE_SHEET_URL)
 
     print("\nWriting to Google Sheet...")
-    _, sheet_service = create_google_services(SHEETS_SCOPES, cred_dir=GOOGLE_CREDS_DIR)
+    sheet_service = _build_sheets_service()
     all_tab_names = [TAB_INTERESTED, TAB_BLANK_MEM_STAGE, TAB_OVERDUE, TAB_SNOOZED, TAB_ACTIVE] + PER_WORKFLOW_TABS
     tab_ids = _get_tab_ids(sheet_service, sheet_id, all_tab_names)
     _write_tab(sheet_service, sheet_id, TAB_INTERESTED,     tab_ids[TAB_INTERESTED],     interested_df,     output_cols, timestamp_str)
@@ -554,19 +588,27 @@ def main() -> None:
 
     print(f"\nDone. {GOOGLE_SHEET_URL}")
 
-    confirm_with_file_link(
+    summary = (
         f"Workflow cards report updated.\n\n"
         f"  overdue:          {len(overdue_df)}\n"
         f"  snoozed:          {len(snoozed_df)}\n"
         f"  active:           {len(active_df)}\n"
         f"  interested:       {len(interested_df)}\n"
-        f"  blank mem stage:  {len(blank_mem_stage_df)}\n\n"
-        f"Click the link below to open the Google Sheet.",
-        GOOGLE_SHEET_URL,
-        title="Workflow Cards Report",
-        buttons=["OK"],
-        close_on_link_click=True,
+        f"  blank mem stage:  {len(blank_mem_stage_df)}\n"
     )
+    print(summary)
+
+    # Local runs show the GUI popup; the Cloud Run Job (headless) skips it and
+    # relies on the printed summary above landing in Cloud Logging.
+    if not os.environ.get("CLOUD_RUN_JOB"):
+        from uvbekutils.pyautobek import confirm_with_file_link
+        confirm_with_file_link(
+            summary + "\nClick the link below to open the Google Sheet.",
+            GOOGLE_SHEET_URL,
+            title="Workflow Cards Report",
+            buttons=["OK"],
+            close_on_link_click=True,
+        )
 
 
 if __name__ == "__main__":

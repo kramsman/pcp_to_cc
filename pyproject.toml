@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=2.0",
     "openpyxl>=3.1",
     "dtale>=3.0",
+    "google-api-python-client>=2.196.0",
 ]
 
 [tool.uv]
