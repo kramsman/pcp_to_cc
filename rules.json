@@ -27,6 +27,13 @@
       "field_id": "1038799",
       "trigger": "completed",
       "value": "Member"
+    },
+    {
+      "description": "Enter 'Should Person go to Member In Process?' flow > set 'Members Stage' to 'Explorer'",
+      "workflow_id": "736375",
+      "field_id": "1038799",
+      "trigger": "entered",
+      "value": "Explorer"
     }
   ],
   "workflow_chain_rules": [
