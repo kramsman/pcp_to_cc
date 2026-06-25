@@ -21,6 +21,7 @@ DROPDOWN_FIELDS = {
     "workflow_id":           "pcp_workflow",
     "add_to_workflow_id":    "pcp_workflow",
     "complete_workflow_id":  "pcp_workflow",
+    "remove_workflow_id":    "pcp_workflow",
     "trigger_workflow_id":   "pcp_workflow",
     "displaces_workflow_id": "pcp_workflow",
     "field_id":              "pcp_field",
@@ -53,15 +54,18 @@ TABS = [
                          "first one, linking workflows into a sequence. Example: when someone completes "
                          "the Explorer workflow, add them to the Member in Process workflow.",
         "key":           "workflow_chain_rules",
-        "cols":          ["description", "workflow_id", "trigger", "add_to_workflow_id"],
+        "cols":          ["description", "workflow_id", "trigger",
+                          "add_to_workflow_id", "remove_workflow_id"],
         "labels":        {
             "description":        "Description",
             "workflow_id":        "Start Workflow ID",
             "trigger":            "Trigger",
             "add_to_workflow_id": "Add to PC Workflow ID",
+            "remove_workflow_id": "Remove from PC Workflow ID",
         },
-        "widths":        [375, 150, 110, 175],
+        "widths":        [375, 150, 110, 175, 175],
         "trigger_field": "trigger",
+        "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
     },
     {
         "title":         "Complete Workflow on Form",

@@ -981,9 +981,17 @@ def _handle_webhook_post():
                 continue
             if rule["trigger"] != trigger:
                 continue
-            matched = True
-            add_to_workflow(person_id, rule["add_to_workflow_id"])
-            logger.info(f"Workflow chain rule applied: '{rule['description']}'")
+            if rule.get("add_to_workflow_id"):
+                add_to_workflow(person_id, rule["add_to_workflow_id"])
+                matched = True
+            if rule.get("remove_workflow_id"):
+                complete_workflow_for_person(
+                    person_id, rule["remove_workflow_id"],
+                    reason=f"Removed by chain rule: {rule['description']}",
+                )
+                matched = True
+            if rule.get("add_to_workflow_id") or rule.get("remove_workflow_id"):
+                logger.info(f"Workflow chain rule applied: '{rule['description']}'")
 
         # PCP workflow override: on entry to a workflow, if a field-based
         # override rule matches, redirect to the rule's target workflow.
