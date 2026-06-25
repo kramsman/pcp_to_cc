@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QFormLayout,
-    QLineEdit, QComboBox, QMessageBox, QDialogButtonBox,
+    QLineEdit, QComboBox, QMessageBox, QDialogButtonBox, QLabel,
 )
 
 RULES_FILE = Path(__file__).parent / "rules.json"
@@ -32,6 +32,9 @@ DROPDOWN_FIELDS = {
 TABS = [
     {
         "title":         "Set PCP Field Values",
+        "description":   "Sets a profile field to a particular value when a person enters or completes a "
+                         "workflow. Example: when someone enters the New Visitor workflow, set their "
+                         "Member Stage field to \"Visitor\".",
         "key":           "workflow_field_rules",
         "cols":          ["description", "workflow_id", "field_id", "trigger", "value"],
         "labels":        {
@@ -46,6 +49,9 @@ TABS = [
     },
     {
         "title":         "Chain PCP Workflows",
+        "description":   "Automatically adds a person to a second workflow when they enter or complete a "
+                         "first one, linking workflows into a sequence. Example: when someone completes "
+                         "the Explorer workflow, add them to the Member in Process workflow.",
         "key":           "workflow_chain_rules",
         "cols":          ["description", "workflow_id", "trigger", "add_to_workflow_id"],
         "labels":        {
@@ -59,6 +65,9 @@ TABS = [
     },
     {
         "title":         "Complete Workflow on Form",
+        "description":   "Marks a workflow as completed for a person when they submit a particular form. "
+                         "Example: when someone fills out the New Member Registration form, complete the "
+                         "Member in Process workflow.",
         "key":           "form_completion_rules",
         "cols":          ["description", "form_id", "complete_workflow_id"],
         "labels":        {
@@ -71,6 +80,10 @@ TABS = [
     },
     {
         "title":         "Assign to PCP Workflows",
+        "description":   "Adds a person to a workflow based on the value of one of their profile fields. "
+                         "Example: when a person's Member Stage field contains \"Explorer\", assign them "
+                         "to the Explorer workflow. Optional columns can trigger the assignment only when "
+                         "they enter another workflow, or remove them from a previous one.",
         "key":           "pcp_workflow_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value",
                           "workflow_id", "trigger_workflow_id", "displaces_workflow_id"],
@@ -88,6 +101,9 @@ TABS = [
     },
     {
         "title":         "Assign to CC Lists",
+        "description":   "Adds a person to a Constant Contact email list based on the value of one of their "
+                         "PCP profile fields. Example: when a person's Member Stage field contains "
+                         "\"Member\", add them to the Members email list in Constant Contact.",
         "key":           "cc_list_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],
         "labels":        {
@@ -191,6 +207,11 @@ class TabWidget(QWidget):
         self.tab = tab
         self.rules = rules
         layout = QVBoxLayout(self)
+        if tab.get("description"):
+            desc = QLabel(tab["description"])
+            desc.setWordWrap(True)
+            desc.setStyleSheet("color: #555; padding: 4px 2px;")
+            layout.addWidget(desc)
         self.table = QTableWidget(0, len(tab["cols"]))
         self.table.setHorizontalHeaderLabels([tab["labels"][c] for c in tab["cols"]])
         for i, w in enumerate(tab["widths"]):
