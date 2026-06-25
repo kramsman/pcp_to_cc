@@ -1,7 +1,10 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
+import html
 import json
 import sys
+import webbrowser
+from datetime import date
 from pathlib import Path
 
 _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uvbekutils")
@@ -16,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 RULES_FILE = Path(__file__).parent / "rules.json"
+REPORT_FILE = Path(__file__).parent / "rules_report.html"
 
 DROPDOWN_FIELDS = {
     "workflow_id":           "pcp_workflow",
@@ -306,10 +310,13 @@ class RuleEditor(QWidget):
         layout.addWidget(nb)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        print_btn = QPushButton("Print Rules")
+        print_btn.clicked.connect(self._print_rules)
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._save)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
+        btn_row.addWidget(print_btn)
         btn_row.addWidget(save_btn)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -323,6 +330,56 @@ class RuleEditor(QWidget):
             json.dump(data, f, indent=2)
         QMessageBox.information(self, "Saved",
             "Rules saved to rules.json.\nRun deploy.sh to apply changes to Cloud Run.")
+
+    def _cell_html(self, col: str, value: str) -> str:
+        """Format one cell. ID columns are shown as 'Name (id)' when the name is known."""
+        api_key = DROPDOWN_FIELDS.get(col)
+        if not api_key or not value:
+            return html.escape(value)
+        name = next((item["name"] for item in _api_cache.get(api_key, [])
+                     if item["id"] == value), None)
+        return html.escape(f"{name} ({value})" if name else value)
+
+    def _print_rules(self):
+        """Write all rule tables to rules_report.html and open it in the browser."""
+        parts = [
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+            "<title>PCP → CC Automation Rules</title>",
+            "<style>",
+            "body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:32px;color:#222;}",
+            "h1{font-size:20px;} h2{font-size:15px;margin-top:28px;}",
+            "p.generated{color:#777;font-size:12px;}",
+            "table{border-collapse:collapse;width:100%;margin-top:6px;font-size:12px;}",
+            "th,td{border:1px solid #bbb;padding:4px 8px;text-align:left;vertical-align:top;}",
+            "th{background:#eee;} tr:nth-child(even) td{background:#f7f7f7;}",
+            "p.empty{color:#999;font-style:italic;}",
+            "@media print{h2{page-break-after:avoid;} tr{page-break-inside:avoid;}}",
+            "</style></head><body>",
+            "<h1>PCP → CC Automation Rules</h1>",
+            f"<p class='generated'>Generated {html.escape(date.today().isoformat())}</p>",
+        ]
+        for tab in TABS:
+            rules = self.rules[tab["key"]]
+            parts.append(f"<h2>{html.escape(tab['title'])}</h2>")
+            if not rules:
+                parts.append("<p class='empty'>No rules.</p>")
+                continue
+            parts.append("<table><tr>")
+            for col in tab["cols"]:
+                parts.append(f"<th>{html.escape(tab['labels'][col])}</th>")
+            parts.append("</tr>")
+            for rule in rules:
+                parts.append("<tr>")
+                for col in tab["cols"]:
+                    parts.append(f"<td>{self._cell_html(col, rule.get(col, ''))}</td>")
+                parts.append("</tr>")
+            parts.append("</table>")
+        parts.append("</body></html>")
+        REPORT_FILE.write_text("\n".join(parts), encoding="utf-8")
+        webbrowser.open(REPORT_FILE.as_uri())
+        QMessageBox.information(self, "Rules printed",
+            f"Rules written to {REPORT_FILE.name} and opened in your browser.\n"
+            "Use the browser's Print (⌘P) to print or save as PDF.")
 
 
 def main():
