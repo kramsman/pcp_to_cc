@@ -9,6 +9,11 @@ Contact lists based on CC_LIST_RULES in config.py.
 Usage (local dev):
     python pcp_to_cc/main.py          # start Flask dev server
     python test_local.py              # send a test webhook in another terminal
+
+If you get an error "Gitupdater not found:
+  1. go into terminal
+  2. copy and enter: source .venv/bin/activate
+  3. then enter: uv pip install git+https://github.com/kramsman/gitupdater.git
 """
 
 import json
@@ -826,6 +831,29 @@ def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
         return False
 
 
+def _active_cards_in_workflow(person_id: str, workflow_id: str, auth) -> list[dict]:
+    """Return the person's active (non-removed, non-completed) cards in workflow_id.
+
+    Queries the PERSON's own cards and filters by workflow client-side. The workflow
+    cards endpoint (/workflows/{id}/cards) does NOT honor where[person_id] — person is
+    a relationship, not a filterable attribute — so it returns every card in the
+    workflow. Filtering there would match other people's cards (e.g. removing the
+    wrong person, or wrongly thinking this person is already enrolled).
+    """
+    r = requests.get(
+        f"{config.PCP_API_BASE}/people/{person_id}/workflow_cards",
+        params={"include": "workflow", "per_page": 100},
+        auth=auth, timeout=10,
+    )
+    r.raise_for_status()
+    return [
+        c for c in r.json().get("data", [])
+        if (c.get("relationships", {}).get("workflow", {}).get("data") or {}).get("id") == workflow_id
+        and c.get("attributes", {}).get("removed_at") is None
+        and c.get("attributes", {}).get("stage") != "completed"
+    ]
+
+
 def add_to_workflow(person_id: str, workflow_id: str) -> bool:
     """Add person to workflow. Skips if person already has an active (non-removed,
     non-completed) card in the workflow."""
@@ -834,15 +862,7 @@ def add_to_workflow(person_id: str, workflow_id: str) -> bool:
         return True
     try:
         auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
-        existing = requests.get(
-            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
-            params={"where[person_id]": person_id},
-            auth=auth, timeout=10,
-        )
-        existing.raise_for_status()
-        active = [c for c in existing.json().get("data", [])
-                  if c.get("attributes", {}).get("removed_at") is None
-                  and c.get("attributes", {}).get("stage") != "completed"]
+        active = _active_cards_in_workflow(person_id, workflow_id, auth)
         if active:
             logger.info(f"add_to_workflow: person {person_id} already active in workflow {workflow_id} — skipping")
             return True
@@ -867,15 +887,7 @@ def complete_workflow_for_person(person_id: str, workflow_id: str, reason: str =
         return True
     try:
         auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
-        r = requests.get(
-            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
-            params={"where[person_id]": person_id},
-            auth=auth, timeout=10,
-        )
-        r.raise_for_status()
-        cards = r.json().get("data", [])
-        active = [c for c in cards if c.get("attributes", {}).get("removed_at") is None
-                  and c.get("attributes", {}).get("stage") != "completed"]
+        active = _active_cards_in_workflow(person_id, workflow_id, auth)
         if not active:
             logger.info(f"complete_workflow_for_person: person {person_id} not active in workflow {workflow_id} — skipping")
             return True
@@ -953,9 +965,20 @@ def _handle_webhook_post():
         "people.v2.events.workflow_card.updated",
     }
     if event_name in _WORKFLOW_CARD_EVENTS:
-        trigger     = "completed" if event.stage == "completed" else "entered"
+        # "entered" comes only from card.created. "completed" comes from a card.updated
+        # whose stage is "completed". Any other card.updated (a step move, a removal,
+        # snooze, etc.) is NOT an entry or completion — ignore it, otherwise removing a
+        # card or moving a step would re-fire the workflow's "entered" rules.
         person_id   = event.person_id
         workflow_id = event.workflow_id
+        if event_name == "people.v2.events.workflow_card.created":
+            trigger = "entered"
+        elif event.stage == "completed":
+            trigger = "completed"
+        else:
+            logger.info(f"Ignored {event_name} (stage={event.stage}) — not an entry or completion  "
+                        f"person_id={person_id}  workflow_id={workflow_id}")
+            return jsonify({"status": "ignored", "event": event_name, "stage": event.stage}), 200
         if not person_id:
             logger.warning(f"Rejected: {event_name} missing person_id")
             return jsonify({"error": "missing person_id in workflow payload"}), 400
@@ -976,9 +999,17 @@ def _handle_webhook_post():
                 continue
             if rule["trigger"] != trigger:
                 continue
-            matched = True
-            add_to_workflow(person_id, rule["add_to_workflow_id"])
-            logger.info(f"Workflow chain rule applied: '{rule['description']}'")
+            if rule.get("add_to_workflow_id"):
+                add_to_workflow(person_id, rule["add_to_workflow_id"])
+                matched = True
+            if rule.get("remove_workflow_id"):
+                complete_workflow_for_person(
+                    person_id, rule["remove_workflow_id"],
+                    reason=f"Removed by chain rule: {rule['description']}",
+                )
+                matched = True
+            if rule.get("add_to_workflow_id") or rule.get("remove_workflow_id"):
+                logger.info(f"Workflow chain rule applied: '{rule['description']}'")
 
         # PCP workflow override: on entry to a workflow, if a field-based
         # override rule matches, redirect to the rule's target workflow.

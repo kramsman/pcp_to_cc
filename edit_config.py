@@ -1,7 +1,10 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
+import html
 import json
 import sys
+import webbrowser
+from datetime import date
 from pathlib import Path
 
 _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uvbekutils")
@@ -12,15 +15,17 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QFormLayout,
-    QLineEdit, QComboBox, QMessageBox, QDialogButtonBox,
+    QLineEdit, QComboBox, QMessageBox, QDialogButtonBox, QLabel,
 )
 
 RULES_FILE = Path(__file__).parent / "rules.json"
+REPORT_FILE = Path(__file__).parent / "rules_report.html"
 
 DROPDOWN_FIELDS = {
     "workflow_id":           "pcp_workflow",
     "add_to_workflow_id":    "pcp_workflow",
     "complete_workflow_id":  "pcp_workflow",
+    "remove_workflow_id":    "pcp_workflow",
     "trigger_workflow_id":   "pcp_workflow",
     "displaces_workflow_id": "pcp_workflow",
     "field_id":              "pcp_field",
@@ -32,6 +37,9 @@ DROPDOWN_FIELDS = {
 TABS = [
     {
         "title":         "Set PCP Field Values",
+        "description":   "Sets a profile field to a particular value when a person enters or completes a "
+                         "workflow. Example: when someone enters the New Visitor workflow, set their "
+                         "Member Stage field to \"Visitor\".",
         "key":           "workflow_field_rules",
         "cols":          ["description", "workflow_id", "field_id", "trigger", "value"],
         "labels":        {
@@ -46,19 +54,28 @@ TABS = [
     },
     {
         "title":         "Chain PCP Workflows",
+        "description":   "Automatically adds a person to a second workflow when they enter or complete a "
+                         "first one, linking workflows into a sequence. Example: when someone completes "
+                         "the Explorer workflow, add them to the Member in Process workflow.",
         "key":           "workflow_chain_rules",
-        "cols":          ["description", "workflow_id", "trigger", "add_to_workflow_id"],
+        "cols":          ["description", "workflow_id", "trigger",
+                          "add_to_workflow_id", "remove_workflow_id"],
         "labels":        {
             "description":        "Description",
             "workflow_id":        "Start Workflow ID",
             "trigger":            "Trigger",
             "add_to_workflow_id": "Add to PC Workflow ID",
+            "remove_workflow_id": "Remove from PC Workflow ID",
         },
-        "widths":        [375, 150, 110, 175],
+        "widths":        [375, 150, 110, 175, 175],
         "trigger_field": "trigger",
+        "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
     },
     {
         "title":         "Complete Workflow on Form",
+        "description":   "Marks a workflow as completed for a person when they submit a particular form. "
+                         "Example: when someone fills out the New Member Registration form, complete the "
+                         "Member in Process workflow.",
         "key":           "form_completion_rules",
         "cols":          ["description", "form_id", "complete_workflow_id"],
         "labels":        {
@@ -71,6 +88,10 @@ TABS = [
     },
     {
         "title":         "Assign to PCP Workflows",
+        "description":   "Adds a person to a workflow based on the value of one of their profile fields. "
+                         "Example: when a person's Member Stage field contains \"Explorer\", assign them "
+                         "to the Explorer workflow. Optional columns can trigger the assignment only when "
+                         "they enter another workflow, or remove them from a previous one.",
         "key":           "pcp_workflow_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value",
                           "workflow_id", "trigger_workflow_id", "displaces_workflow_id"],
@@ -88,6 +109,9 @@ TABS = [
     },
     {
         "title":         "Assign to CC Lists",
+        "description":   "Adds a person to a Constant Contact email list based on the value of one of their "
+                         "PCP profile fields. Example: when a person's Member Stage field contains "
+                         "\"Member\", add them to the Members email list in Constant Contact.",
         "key":           "cc_list_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],
         "labels":        {
@@ -191,6 +215,11 @@ class TabWidget(QWidget):
         self.tab = tab
         self.rules = rules
         layout = QVBoxLayout(self)
+        if tab.get("description"):
+            desc = QLabel(tab["description"])
+            desc.setWordWrap(True)
+            desc.setStyleSheet("color: #555; padding: 4px 2px;")
+            layout.addWidget(desc)
         self.table = QTableWidget(0, len(tab["cols"]))
         self.table.setHorizontalHeaderLabels([tab["labels"][c] for c in tab["cols"]])
         for i, w in enumerate(tab["widths"]):
@@ -281,10 +310,13 @@ class RuleEditor(QWidget):
         layout.addWidget(nb)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        print_btn = QPushButton("Print Rules")
+        print_btn.clicked.connect(self._print_rules)
         save_btn = QPushButton("Save")
         save_btn.clicked.connect(self._save)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
+        btn_row.addWidget(print_btn)
         btn_row.addWidget(save_btn)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -298,6 +330,56 @@ class RuleEditor(QWidget):
             json.dump(data, f, indent=2)
         QMessageBox.information(self, "Saved",
             "Rules saved to rules.json.\nRun deploy.sh to apply changes to Cloud Run.")
+
+    def _cell_html(self, col: str, value: str) -> str:
+        """Format one cell. ID columns are shown as 'Name (id)' when the name is known."""
+        api_key = DROPDOWN_FIELDS.get(col)
+        if not api_key or not value:
+            return html.escape(value)
+        name = next((item["name"] for item in _api_cache.get(api_key, [])
+                     if item["id"] == value), None)
+        return html.escape(f"{name} ({value})" if name else value)
+
+    def _print_rules(self):
+        """Write all rule tables to rules_report.html and open it in the browser."""
+        parts = [
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>",
+            "<title>PCP → CC Automation Rules</title>",
+            "<style>",
+            "body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:32px;color:#222;}",
+            "h1{font-size:20px;} h2{font-size:15px;margin-top:28px;}",
+            "p.generated{color:#777;font-size:12px;}",
+            "table{border-collapse:collapse;width:100%;margin-top:6px;font-size:12px;}",
+            "th,td{border:1px solid #bbb;padding:4px 8px;text-align:left;vertical-align:top;}",
+            "th{background:#eee;} tr:nth-child(even) td{background:#f7f7f7;}",
+            "p.empty{color:#999;font-style:italic;}",
+            "@media print{h2{page-break-after:avoid;} tr{page-break-inside:avoid;}}",
+            "</style></head><body>",
+            "<h1>PCP → CC Automation Rules</h1>",
+            f"<p class='generated'>Generated {html.escape(date.today().isoformat())}</p>",
+        ]
+        for tab in TABS:
+            rules = self.rules[tab["key"]]
+            parts.append(f"<h2>{html.escape(tab['title'])}</h2>")
+            if not rules:
+                parts.append("<p class='empty'>No rules.</p>")
+                continue
+            parts.append("<table><tr>")
+            for col in tab["cols"]:
+                parts.append(f"<th>{html.escape(tab['labels'][col])}</th>")
+            parts.append("</tr>")
+            for rule in rules:
+                parts.append("<tr>")
+                for col in tab["cols"]:
+                    parts.append(f"<td>{self._cell_html(col, rule.get(col, ''))}</td>")
+                parts.append("</tr>")
+            parts.append("</table>")
+        parts.append("</body></html>")
+        REPORT_FILE.write_text("\n".join(parts), encoding="utf-8")
+        webbrowser.open(REPORT_FILE.as_uri())
+        QMessageBox.information(self, "Rules printed",
+            f"Rules written to {REPORT_FILE.name} and opened in your browser.\n"
+            "Use the browser's Print (⌘P) to print or save as PDF.")
 
 
 def main():

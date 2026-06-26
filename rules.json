@@ -27,6 +27,13 @@
       "field_id": "1038799",
       "trigger": "completed",
       "value": "Member"
+    },
+    {
+      "description": "Enter 'Should Person go to Member In Process?' flow > set 'Members Stage' to 'Explorer'",
+      "workflow_id": "736375",
+      "field_id": "1038799",
+      "trigger": "entered",
+      "value": "Explorer"
     }
   ],
   "workflow_chain_rules": [
@@ -47,6 +54,13 @@
       "workflow_id": "731457",
       "trigger": "completed",
       "add_to_workflow_id": "730471"
+    },
+    {
+      "description": "Enter 'Should Person go to Member In Process?' flow > remove 'Visitor' flow",
+      "workflow_id": "736375",
+      "trigger": "entered",
+      "add_to_workflow_id": "731975",
+      "remove_workflow_id": "725397"
     }
   ],
   "form_completion_rules": [

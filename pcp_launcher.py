@@ -69,7 +69,7 @@ TOOLS = {
         ),
         "detach": False,
     },
-    "Edit Config": {
+    "Workflow Assignment": {
         "script": ROOT_PATH / "edit_config.py",
         "description": (
             "Edit workflow and CC list rules without modifying Python code.\n"
