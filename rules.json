@@ -54,6 +54,13 @@
       "workflow_id": "731457",
       "trigger": "completed",
       "add_to_workflow_id": "730471"
+    },
+    {
+      "description": "Enter 'Should Person go to Member In Process?' flow > remove 'Visitor' flow",
+      "workflow_id": "736375",
+      "trigger": "entered",
+      "add_to_workflow_id": "731975",
+      "remove_workflow_id": "725397"
     }
   ],
   "form_completion_rules": [
