@@ -36,10 +36,10 @@ DROPDOWN_FIELDS = {
 
 TABS = [
     {
-        "title":         "Set PCP Field Values",
+        "title":         "Set Field Values",
         "description":   "Sets a profile field to a particular value when a person enters or completes a "
-                         "workflow. Example: when someone enters the New Visitor workflow, set their "
-                         "Member Stage field to \"Visitor\".",
+                         "workflow. Example: when someone enters the 'Visitor' workflow, set their "
+                         "Member Stage field to 'Visitor'.",
         "key":           "workflow_field_rules",
         "cols":          ["description", "workflow_id", "field_id", "trigger", "value"],
         "labels":        {
@@ -53,10 +53,11 @@ TABS = [
         "trigger_field": "trigger",
     },
     {
-        "title":         "Chain PCP Workflows",
-        "description":   "Automatically adds a person to a second workflow when they enter or complete a "
+        "title":         "Chain Workflows",
+        "description":   "Automatically adds a person to a second workflow or removes them from a workflow when they "
+                         "enter or complete a "
                          "first one, linking workflows into a sequence. Example: when someone completes "
-                         "the Explorer workflow, add them to the Member in Process workflow.",
+                         "the 'Explorer' workflow, add them to the 'Member in Process workflow.'",
         "key":           "workflow_chain_rules",
         "cols":          ["description", "workflow_id", "trigger",
                           "add_to_workflow_id", "remove_workflow_id"],
@@ -72,10 +73,10 @@ TABS = [
         "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
     },
     {
-        "title":         "Complete Workflow on Form",
+        "title":         "Complete Workflow via Form",
         "description":   "Marks a workflow as completed for a person when they submit a particular form. "
-                         "Example: when someone fills out the New Member Registration form, complete the "
-                         "Member in Process workflow.",
+                         "Example: when someone fills out the 'More Information' form, complete the "
+                         "'Visitor' workflow.",
         "key":           "form_completion_rules",
         "cols":          ["description", "form_id", "complete_workflow_id"],
         "labels":        {
@@ -87,11 +88,15 @@ TABS = [
         "trigger_field": None,
     },
     {
-        "title":         "Assign to PCP Workflows",
-        "description":   "Adds a person to a workflow based on the value of one of their profile fields. "
-                         "Example: when a person's Member Stage field contains \"Explorer\", assign them "
-                         "to the Explorer workflow. Optional columns can trigger the assignment only when "
-                         "they enter another workflow, or remove them from a previous one.",
+        "title":         "Assign to Workflows",
+        "description":   "Assigns a person to a workflow when one of their profile fields changes to a "
+                         "value containing a given string — the check runs when the person is created or "
+                         "edited, so changing the field is what triggers it. Example: when 'Relationship to "
+                         "4th U' changes to contain 'membership', assign them to the 'Membership in Process' "
+                         "workflow. Optionally, \"Remove from\" also pulls them out of an earlier workflow "
+                         "(turning an add into a move), and \"Trigger when entering\" runs the rule only when "
+                         "they enter a chosen workflow instead of on profile edits (useful when the field is "
+                         "set automatically).",
         "key":           "pcp_workflow_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value",
                           "workflow_id", "trigger_workflow_id", "displaces_workflow_id"],
@@ -99,7 +104,7 @@ TABS = [
             "description":           "Description",
             "pcp_field_id":          "PCP Field",
             "pcp_value":             "PCP Field Contains",
-            "workflow_id":           "Assign to PCP Workflow",
+            "workflow_id":           "Assign to Workflow",
             "trigger_workflow_id":   "Trigger when entering (optional)",
             "displaces_workflow_id": "Remove from (optional)",
         },
@@ -110,8 +115,8 @@ TABS = [
     {
         "title":         "Assign to CC Lists",
         "description":   "Adds a person to a Constant Contact email list based on the value of one of their "
-                         "PCP profile fields. Example: when a person's Member Stage field contains "
-                         "\"Member\", add them to the Members email list in Constant Contact.",
+                         "profile fields. Example: when a person's 'Member Stage' field contains "
+                         "'Member', add them to the 'Members' email list in Constant Contact.",
         "key":           "cc_list_rules",
         "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],
         "labels":        {

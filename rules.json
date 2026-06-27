@@ -78,14 +78,6 @@
       "workflow_id": "736375",
       "trigger_workflow_id": "",
       "displaces_workflow_id": ""
-    },
-    {
-      "description": "Relationship contains 'membership' > Should Person go to Mem in Process",
-      "pcp_field_id": "1039160",
-      "pcp_value": "membership",
-      "workflow_id": "736375",
-      "trigger_workflow_id": "",
-      "displaces_workflow_id": ""
     }
   ],
   "cc_list_rules": [
