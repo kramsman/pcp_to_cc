@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "id": "28429383-85d1-4ed4-949f-80eb438e35e1",
+      "type": "EventDelivery",
+      "attributes": {
+        "name": "people.v2.events.field_datum.created",
+        "attempt": 1,
+        "payload": "{\"data\":{\"type\":\"FieldDatum\",\"id\":\"278974273\",\"attributes\":{\"value\":\"Interested in joining!  Please contact me about membership.\"},\"relationships\":{\"field_definition\":{\"data\":{\"type\":\"FieldDefinition\",\"id\":\"1039160\"}},\"customizable\":{\"data\":{\"type\":\"Person\",\"id\":\"196549671\"}}}}}"
+      },
+      "relationships": {"organization": {"data": {"type": "Organization", "id": "526881"}}}
+    }
+  ]
+}

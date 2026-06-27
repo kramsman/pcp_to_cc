@@ -195,6 +195,33 @@ class TestWebhookRoute:
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "test_mode"
 
+    def test_field_datum_triggers_workflow_rule(self, flask_client):
+        """field_datum.created for field 1039160 with a 'membership' value should
+        add the person to the target workflow — matched inline from the payload,
+        with no PCP re-fetch (no eventual-consistency race)."""
+        body = json.loads((PAYLOADS_DIR / "PCP" / "field_datum_created.json").read_text())
+        with patch("pcp_to_cc.main.add_to_workflow", return_value=True) as mock_add, \
+             patch("pcp_to_cc.main.fetch_person_from_pcp") as mock_fetch:
+            resp = flask_client.post("/webhook", json=body)
+        print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ok"
+        mock_add.assert_called_once_with("196549671", "736375")
+        mock_fetch.assert_not_called()
+
+    def test_field_datum_non_matching_value(self, flask_client):
+        """field_datum for field 1039160 whose value lacks 'membership' should match
+        no rule and not add to any workflow."""
+        body = json.loads((PAYLOADS_DIR / "PCP" / "field_datum_created.json").read_text())
+        inner = json.loads(body["data"][0]["attributes"]["payload"])
+        inner["data"]["attributes"]["value"] = "Just visiting for now"
+        body["data"][0]["attributes"]["payload"] = json.dumps(inner)
+        with patch("pcp_to_cc.main.add_to_workflow") as mock_add:
+            resp = flask_client.post("/webhook", json=body)
+        print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
+        assert resp.status_code == 200
+        mock_add.assert_not_called()
+
     def test_pcp_fetch_failure_returns_502(self, flask_client, webhook_payload):
         with patch("pcp_to_cc.main.fetch_person_from_pcp", return_value=None):
             resp = flask_client.post("/webhook", json=webhook_payload)

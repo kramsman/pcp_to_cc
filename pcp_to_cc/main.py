@@ -106,13 +106,26 @@ class FormSubmission(BaseModel):
     attributes:    FormSubmissionAttrs = FormSubmissionAttrs()
     relationships: FormSubmissionRels  = FormSubmissionRels()
 
+class FieldDatumAttrs(BaseModel):
+    value: Optional[str] = None
+
+class FieldDatumRels(BaseModel):
+    field_definition: RelRef = RelRef()
+    customizable:     RelRef = RelRef()  # the Person the datum belongs to
+
+class FieldDatum(BaseModel):
+    type: Literal["FieldDatum"]
+    id: str
+    attributes:    FieldDatumAttrs = FieldDatumAttrs()
+    relationships: FieldDatumRels  = FieldDatumRels()
+
 class Unknown(BaseModel):
     model_config = {"extra": "allow"}
     type: str
     id: str = ""
 
 # No discriminator — falls back to Unknown for any type PCP adds in future
-InnerData = Union[Person, WorkflowCard, WorkflowCardActivity, FormSubmission, Unknown]
+InnerData = Union[Person, WorkflowCard, WorkflowCardActivity, FormSubmission, FieldDatum, Unknown]
 
 class InnerPayload(BaseModel):
     data: InnerData
@@ -153,7 +166,23 @@ class LegacyWebhookEvent(BaseModel):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
         if isinstance(inner, FormSubmission):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        if isinstance(inner, FieldDatum):
+            return inner.relationships.customizable.data.id if inner.relationships.customizable.data else ""
         return inner.id
+
+    @property
+    def field_definition_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FieldDatum):
+            return inner.relationships.field_definition.data.id if inner.relationships.field_definition.data else ""
+        return ""
+
+    @property
+    def field_value(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FieldDatum):
+            return inner.attributes.value or ""
+        return ""
 
     @property
     def submission_id(self) -> str:
@@ -234,7 +263,23 @@ class PcpWebhookEvent(BaseModel):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
         if isinstance(inner, FormSubmission):
             return inner.relationships.person.data.id if inner.relationships.person.data else ""
+        if isinstance(inner, FieldDatum):
+            return inner.relationships.customizable.data.id if inner.relationships.customizable.data else ""
         return inner.id
+
+    @property
+    def field_definition_id(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FieldDatum):
+            return inner.relationships.field_definition.data.id if inner.relationships.field_definition.data else ""
+        return ""
+
+    @property
+    def field_value(self) -> str:
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, FieldDatum):
+            return inner.attributes.value or ""
+        return ""
 
     @property
     def submission_id(self) -> str:
@@ -1031,6 +1076,49 @@ def _handle_webhook_post():
 
         if not matched:
             logger.info(f"No workflow rules matched workflow_id={workflow_id} trigger={trigger}")
+        return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
+
+    # ── Field datum events — field-driven workflow rules ──────────────────────
+    # A custom field was written or changed. The event carries the field id,
+    # person id, and value inline, so PCP_WORKFLOW_RULES can match without a PCP
+    # re-fetch — avoiding the eventual-consistency race where a person/form event
+    # fires before the form's field data has settled. Only rules with no
+    # trigger_workflow_id are field-driven; rules WITH one fire on workflow entry.
+    _FIELD_DATUM_EVENTS = {
+        "people.v2.events.field_datum.created",
+        "people.v2.events.field_datum.updated",
+    }
+    if event_name in _FIELD_DATUM_EVENTS:
+        field_id  = event.field_definition_id
+        person_id = event.person_id
+        value     = event.field_value
+        if not (field_id and person_id):
+            logger.info(f"Ignored {event_name}: missing field_definition_id or person_id")
+            return jsonify({"status": "ignored", "event": event_name}), 200
+
+        matched = False
+        for rule in config.PCP_WORKFLOW_RULES:
+            if rule.get("trigger_workflow_id", ""):
+                continue  # workflow-entry rules fire from workflow_card.created instead
+            if rule["pcp_field_id"] != field_id:
+                continue
+            pcp_value = rule["pcp_value"]
+            if pcp_value and pcp_value.lower() in value.lower():
+                matched = True
+                add_to_workflow(person_id, rule["workflow_id"])
+                if rule.get("displaces_workflow_id"):
+                    complete_workflow_for_person(
+                        person_id, rule["displaces_workflow_id"],
+                        reason=f"Replaced by automation rule: {rule['description']}",
+                    )
+                logger.info(f"Field datum rule applied: '{rule['description']}'  "
+                            f"person {person_id} → workflow {rule['workflow_id']}")
+            else:
+                logger.info(f"Field datum rule not matched: '{rule['description']}' "
+                            f"(field_id={field_id}, value={value!r}, want '{pcp_value}')")
+
+        if not matched:
+            logger.info(f"No field datum rules matched field_id={field_id} person_id={person_id}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
     # ── Form completion rules — complete workflows on form submit ─────────────

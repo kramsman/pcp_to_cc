@@ -28,7 +28,11 @@
       "Read(//opt/homebrew/share/**)",
       "Read(//usr/local/Caskroom/**)",
       "Read(//Users/Denise/**)",
-      "Bash(zsh *)"
+      "Bash(zsh *)",
+      "Bash(.venv/bin/python -c \"from pcp_to_cc import config; import json; print\\(json.dumps\\(config.PCP_WORKFLOW_RULES, indent=2\\)\\)\")",
+      "Bash(.venv/bin/python -m pytest tests/test_main.py::TestWebhookRoute -q)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -m pytest tests/test_main.py::TestApplyRules::test_what_brings_you_social_justice -q)"
     ]
   }
 }

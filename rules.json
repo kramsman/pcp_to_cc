@@ -72,7 +72,7 @@
   ],
   "pcp_workflow_rules": [
     {
-      "description": "Relationship contains 'membership' > Should Person go to Mem in Process",
+      "description": "Relationship contains 'membership' > to 'Should Person go to Mem in Process' flow",
       "pcp_field_id": "1039160",
       "pcp_value": "membership",
       "workflow_id": "736375",
