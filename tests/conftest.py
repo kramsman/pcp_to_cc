@@ -13,8 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# main.py uses `import config` (bare), so pcp_to_cc/ must be on sys.path
-_PKG_DIR = Path(__file__).parent.parent / "pcp_to_cc"
+# main.py uses `import config` (bare), so pco_webhook/ must be on sys.path
+_PKG_DIR = Path(__file__).parent.parent / "pco_webhook"
 if str(_PKG_DIR) not in sys.path:
     sys.path.insert(0, str(_PKG_DIR))
 
@@ -223,11 +223,11 @@ def flask_client(mock_secret_manager):
     import sys
 
     # Reload config and main to pick up monkeypatched env vars
-    for mod in ["config", "pcp_to_cc.config", "pcp_to_cc.main"]:
+    for mod in ["config", "pco_webhook.config", "pco_webhook.main"]:
         if mod in sys.modules:
             del sys.modules[mod]
 
-    from pcp_to_cc.main import app
+    from pco_webhook.main import app
     app.config["TESTING"] = True
     with app.test_client() as client:
         yield client

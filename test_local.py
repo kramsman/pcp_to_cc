@@ -2,7 +2,7 @@
 Local test script for pcp-to-cc webhook.
 
 Usage:
-    1. Start the server:       python pcp_to_cc/main.py
+    1. Start the server:       python pco_webhook/main.py
     2. In another terminal:    python test_local.py
 
 Edit the payloads below to test different scenarios.
@@ -94,7 +94,7 @@ def post(path: str, payload: dict, label: str):
         print(f"Response: {json.dumps(resp.json(), indent=2)}")
     except requests.exceptions.ConnectionError:
         print("ERROR: Could not connect. Is the server running?")
-        print("  Run:  python pcp_to_cc/main.py")
+        print("  Run:  python pco_webhook/main.py")
 
 
 def test_health():

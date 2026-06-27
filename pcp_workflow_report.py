@@ -38,7 +38,6 @@ PER_WORKFLOW_TABS = [
     "Explorer",
     "Get Contact Information",
     "Get Phone Number",
-    "Initial Visitor Entered",
     "Membership Ceremony",
     "Membership In Process",
     "Next Membership Ceremony",
@@ -163,7 +162,7 @@ def _fetch_all_with_included(url: str, auth: tuple, params: dict | None = None) 
             auth=auth,
             params=params if next_url == url else None,  # params already embedded in subsequent next URLs
             timeout=15,
-            headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"},
+            headers={"User-Agent": "pco_webhook (office2@4thu.org)"},
         )
         resp.raise_for_status()
         body = resp.json()
@@ -191,7 +190,7 @@ def _fetch_all(url: str, auth: tuple) -> list[dict]:
     while next_url:
         resp = requests.get(
             next_url, auth=auth, timeout=15,
-            headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"},
+            headers={"User-Agent": "pco_webhook (office2@4thu.org)"},
         )
         resp.raise_for_status()
         body = resp.json()

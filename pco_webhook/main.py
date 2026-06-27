@@ -7,7 +7,7 @@ and custom field data), then adds matching profiles to Constant
 Contact lists based on CC_LIST_RULES in config.py.
 
 Usage (local dev):
-    python pcp_to_cc/main.py          # start Flask dev server
+    python pco_webhook/main.py          # start Flask dev server
     python test_local.py              # send a test webhook in another terminal
 
 If you get an error "Gitupdater not found:
@@ -585,7 +585,7 @@ def fetch_person_from_pcp(person_id: str) -> dict | None:
     try:
         resp = requests.get(
             url, params=params, auth=auth, timeout=10,
-            headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"},
+            headers={"User-Agent": "pco_webhook (office2@4thu.org)"},
         )
         resp.raise_for_status()
         data = resp.json()

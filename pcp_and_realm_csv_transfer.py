@@ -384,7 +384,7 @@ def _fetch_pcp_schema() -> dict[str, dict]:
         return sm_client.access_secret_version(request={"name": path}).payload.data.decode("UTF-8")
 
     auth = (_secret("PCP_APP_ID"), _secret("PCP_SECRET"))
-    hdrs = {"User-Agent": "pcp_to_cc (office2@4thu.org)"}
+    hdrs = {"User-Agent": "pco_webhook (office2@4thu.org)"}
 
     schema: dict[str, dict] = {}
 

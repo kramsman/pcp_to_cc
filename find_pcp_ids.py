@@ -67,7 +67,7 @@ def _fetch_all(endpoint: str, auth: tuple, lines: list[str]) -> list[dict]:
     while next_url:
         try:
             resp = requests.get(next_url, auth=auth, timeout=10,
-                                headers={"User-Agent": "pcp_to_cc (office2@4thu.org)"})
+                                headers={"User-Agent": "pco_webhook (office2@4thu.org)"})
             resp.raise_for_status()
         except requests.RequestException as e:
             _emit(lines, f"ERROR fetching {endpoint}: {e}")
