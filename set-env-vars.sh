@@ -7,6 +7,12 @@
 # The ^|^ prefix tells gcloud to use | as the separator instead of the
 # default comma — necessary if any values contain commas.
 
+# Refresh credentials via browser if needed (avoids terminal password prompt).
+# When this script is run standalone, gcloud may trigger reauthentication; this
+# forces the Google web login flow instead of the terminal password prompt.
+gcloud auth print-access-token --account=office2@4thu.org > /dev/null 2>&1 || \
+  gcloud auth login --account=office2@4thu.org
+
 ENV_VARS=(
 
   # ── Feature flags ──────────────────────────────────────────────────────────

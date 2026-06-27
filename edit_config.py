@@ -93,8 +93,8 @@ TABS = [
                          "value containing a given string — the check runs when the person is created or "
                          "edited, so changing the field is what triggers it. Example: when 'Relationship to "
                          "4th U' changes to contain 'membership', assign them to the 'Membership in Process' "
-                         "workflow. Optionally, \"Remove from\" also pulls them out of an earlier workflow "
-                         "(turning an add into a move), and \"Trigger when entering\" runs the rule only when "
+                         "workflow. Optionally, 'Remove from' also pulls them out of an earlier workflow "
+                         "(turning an add into a move), and 'Trigger when entering' runs the rule only when "
                          "they enter a chosen workflow instead of on profile edits (useful when the field is "
                          "set automatically).",
         "key":           "pcp_workflow_rules",
