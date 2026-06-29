@@ -1,8 +1,15 @@
 {
   "workflow_field_rules": [
     {
-      "description": "Enter New Visitor workflow > set Member Stage to Visitor",
+      "description": "Enter 'Visitor' workflow > set Member Stage to 'Visitor'",
       "workflow_id": "725397",
+      "field_id": "1038799",
+      "trigger": "entered",
+      "value": "Visitor"
+    },
+    {
+      "description": "Enter 'Visitor Online' workflow > set Member Stage to 'Visitor'",
+      "workflow_id": "754034",
       "field_id": "1038799",
       "trigger": "entered",
       "value": "Visitor"

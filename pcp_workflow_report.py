@@ -43,6 +43,7 @@ PER_WORKFLOW_TABS = [
     "Next Membership Ceremony",
     "Regular Contributor",
     "Should Person go to Membership in Process",
+    "Visitor Online",
     "Visitor",
 ]
 TIMESTAMP_CELL = "A3"
