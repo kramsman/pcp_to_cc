@@ -4,7 +4,7 @@
       "Bash(wc:*)",
       "Bash(chmod +x:*)",
       "Bash(uv sync:*)",
-      "Bash(PYTHONPATH=pcp_to_cc uv run pytest tests/ -s -v)",
+      "Bash(PYTHONPATH=pco_webhook uv run pytest tests/ -s -v)",
       "WebFetch(domain:v3.developer.constantcontact.com)",
       "Bash(ls /Users/Denise/Library/CloudStorage/Dropbox/4thU/process_automations/pco_webhook_root/*.py)",
       "WebFetch(domain:api.planningcenteronline.com)",
@@ -29,7 +29,7 @@
       "Read(//usr/local/Caskroom/**)",
       "Read(//Users/Denise/**)",
       "Bash(zsh *)",
-      "Bash(.venv/bin/python -c \"from pcp_to_cc import config; import json; print\\(json.dumps\\(config.PCP_WORKFLOW_RULES, indent=2\\)\\)\")",
+      "Bash(.venv/bin/python -c \"from pco_webhook import config; import json; print\\(json.dumps\\(config.PCP_WORKFLOW_RULES, indent=2\\)\\)\")",
       "Bash(.venv/bin/python -m pytest tests/test_main.py::TestWebhookRoute -q)",
       "Bash(.venv/bin/python -m pytest tests/ -q)",
       "Bash(.venv/bin/python -m pytest tests/test_main.py::TestApplyRules::test_what_brings_you_social_justice -q)"

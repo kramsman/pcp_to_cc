@@ -12,7 +12,7 @@ COPY pyproject.toml uv.lock rules.json ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code
-COPY pcp_to_cc/ pcp_to_cc/
+COPY pco_webhook/ pco_webhook/
 
 # Report script — entrypoint for the weekly pcp-workflow-report Cloud Run Job
 COPY pcp_workflow_report.py ./
@@ -20,6 +20,6 @@ COPY pcp_workflow_report.py ./
 # Cloud Run sets PORT automatically; default to 8080
 ENV PORT=8080
 # Make config.py importable as 'config' (main.py uses: import config)
-ENV PYTHONPATH=/app/pcp_to_cc
+ENV PYTHONPATH=/app/pco_webhook
 
-CMD uv run gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 pcp_to_cc.main:app
+CMD uv run gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 pco_webhook.main:app
