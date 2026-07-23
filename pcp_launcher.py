@@ -2,7 +2,31 @@
 pcp_launcher.py
 
 Launcher menu for PCP / Realm / Constant Contact utilities.
-Run this script to pick and launch one of the available tools.
+
+Running this script refreshes Google credentials (re-authenticating in the
+browser if they have expired), then shows a dialog listing the available tools.
+Pick one and the launcher runs its underlying script — most run inline, while
+"Workflow Assignment" is detached into its own process so it can open its own
+editor window.
+
+Menu items:
+    Transfer Data           Transfer member data between Planning Center People
+                            (PCP) and Realm — reads an exported CSV, applies a
+                            column-mapping spreadsheet, and writes a reformatted
+                            CSV ready for import.
+    Find PCP IDs            List PCP field definitions with each field's numeric
+                            ID, name, and type, for locating IDs used in config.
+    Find CC IDs             List Constant Contact lists with each list's UUID,
+                            name, status, and member count, for locating IDs
+                            used in config.
+    Workflow Cards Report   Report every active workflow card across all PCP
+                            workflows to a CSV (workflow, step, person,
+                            assignee, snoozed, overdue, last-updated).
+    Workflow Assignment     Edit workflow and CC list rules via a GUI without
+                            touching Python code; changes save to rules.json
+                            (run deploy.sh to apply them to Cloud Run).
+    Check for Updates       Check GitHub for newer versions of the uvbekutils
+                            and bekgoogle libraries and reinstall if available.
 """
 import os
 import sys
