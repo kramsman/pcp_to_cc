@@ -37,16 +37,82 @@ DROPDOWN_FIELDS = {
 
 TABS = [
     {
-        "title":         "Set Field Values",
+        "title":         "Assign WF by Form Submission",
+        "description":   "Adds profile to a workflow and/or completes a workflow when they submit a particular "
+                         "form.  Example: when someone fills out the 'Tell Us About Yourself' form, complete the "
+                         "'Visitor' workflow and add to 'Explorer'. 'Add to WF' can be used instead of a PCO "
+                         "automation so all form-triggered workflow functions can be done here and not split with PCO.",
+        "key":           "form_completion_rules",
+        "cols":          ["description", "form_id", "add_to_workflow_id", "complete_workflow_id"],
+        "labels":        {
+            "description":          "Description",
+            "form_id":              "Trigger Form ID",
+            "add_to_workflow_id":   "Add to WF ID",
+            "complete_workflow_id": "Complete WF ID",
+        },
+        "widths":        [350, 150, 175, 175],
+        "trigger_field": None,
+        "optional_cols": ["complete_workflow_id", "add_to_workflow_id"],
+    },
+    {
+        "title":         "WF From Field",
+        "description":   "Assigns a person to a workflow when one of their profile fields contains a particular string.  "
+                         "Example: when the 'Relationship to "
+                         "4th U' field contains 'membership', which shows an interest, assign them to the "
+                         "'Explorer' workflow. "
+                         "The check runs whenever the field's value is set or changed. "
+                         "'Trigger when entering WF ID' alters what starts the "
+                         "check: instead of checking with every profile edit, it only runs when they enter "
+                         "the workflow (it's an AND condition). Use this when the field "
+                         "gets set automatically on workflow entry, since PCO's change notification can "
+                         "arrive before the value is saved. "
+                         "Optionally, 'Remove from' pulls them from an earlier workflow.",
+        "key":           "pcp_workflow_rules",
+        "cols":          ["description", "trigger_workflow_id", "pcp_field_id", "pcp_value",
+                          "workflow_id", "displaces_workflow_id"],
+        "labels":        {
+            "description":           "Description",
+            "pcp_field_id":          "Field ID",
+            "pcp_value":             "Field Contains String",
+            "workflow_id":           "Assign to WF ID",
+            "trigger_workflow_id":   "Trigger when entering WF ID (optional)",
+            "displaces_workflow_id": "Remove from WF ID (optional)",
+        },
+        "widths":        [300, 110, 110, 150, 175, 150],
+        "trigger_field": None,
+        "optional_cols": ["trigger_workflow_id", "displaces_workflow_id"],
+    },
+    {
+        "title":         "Chain WFs",
+        "description":   "Automatically adds a profile to a second workflow or removes them from a workflow when they "
+                         "enter or complete a "
+                         "first one, linking workflows into a sequence. Example: when someone completes "
+                         "the 'Explorer' workflow, add them to the 'Member in Process workflow.'",
+        "key":           "workflow_chain_rules",
+        "cols":          ["description", "trigger", "workflow_id",
+                          "add_to_workflow_id", "remove_workflow_id"],
+        "labels":        {
+            "description":        "Description",
+            "workflow_id":        "Triggered WF ID",
+            "trigger":            "Trigger",
+            "add_to_workflow_id": "Add to WF ID",
+            "remove_workflow_id": "Remove from WF ID",
+        },
+        "widths":        [375, 150, 110, 175, 175],
+        "trigger_field": "trigger",
+        "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
+    },
+    {
+        "title":         "Set Fields by WF",
         "description":   "Sets a profile field to a particular value when a person enters or completes a "
                          "workflow. Example: when someone enters the 'Visitor' workflow, set their "
                          "Member Stage field to 'Visitor'.",
         "key":           "workflow_field_rules",
-        "cols":          ["description", "workflow_id", "field_id", "trigger", "value"],
+        "cols":          ["description", "trigger", "workflow_id", "field_id", "value"],
         "labels":        {
             "description": "Description",
-            "workflow_id": "PCP Workflow ID",
-            "field_id":    "PCP Field ID",
+            "workflow_id": "Triggered WF ID",
+            "field_id":    "Field ID",
             "trigger":     "Trigger",
             "value":       "Value to set",
         },
@@ -54,70 +120,7 @@ TABS = [
         "trigger_field": "trigger",
     },
     {
-        "title":         "Chain Workflows",
-        "description":   "Automatically adds a person to a second workflow or removes them from a workflow when they "
-                         "enter or complete a "
-                         "first one, linking workflows into a sequence. Example: when someone completes "
-                         "the 'Explorer' workflow, add them to the 'Member in Process workflow.'",
-        "key":           "workflow_chain_rules",
-        "cols":          ["description", "workflow_id", "trigger",
-                          "add_to_workflow_id", "remove_workflow_id"],
-        "labels":        {
-            "description":        "Description",
-            "workflow_id":        "Start Workflow ID",
-            "trigger":            "Trigger",
-            "add_to_workflow_id": "Add to PC Workflow ID",
-            "remove_workflow_id": "Remove from PC Workflow ID",
-        },
-        "widths":        [375, 150, 110, 175, 175],
-        "trigger_field": "trigger",
-        "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
-    },
-    {
-        "title":         "Workflow Actions on Form Submission",
-        "description":   "Completes and/or adds to a workflow for a person when they submit a particular "
-                         "form. Example: when someone fills out the 'More Information' form, complete the "
-                         "'Visitor' workflow. 'Add to Workflow' can be used instead of a PCP native "
-                         "automation, so form-triggered workflow entry lives here with everything else.",
-        "key":           "form_completion_rules",
-        "cols":          ["description", "form_id", "complete_workflow_id", "add_to_workflow_id"],
-        "labels":        {
-            "description":          "Description",
-            "form_id":              "PCP trigger Form ID",
-            "complete_workflow_id": "Workflow to Complete ID",
-            "add_to_workflow_id":   "Add to Workflow ID (optional)",
-        },
-        "widths":        [350, 150, 175, 175],
-        "trigger_field": None,
-        "optional_cols": ["complete_workflow_id", "add_to_workflow_id"],
-    },
-    {
-        "title":         "Assign to Workflows",
-        "description":   "Assigns a person to a workflow when one of their profile fields changes to a "
-                         "value containing a given string — the check runs when the person is created or "
-                         "edited, so changing the field is what triggers it. Example: when 'Relationship to "
-                         "4th U' changes to contain 'membership', assign them to the 'Explorer' "
-                         "workflow. Optionally, 'Remove from' also pulls them out of an earlier workflow "
-                         "(turning an add into a move), and 'Trigger when entering' runs the rule only when "
-                         "they enter a chosen workflow instead of on profile edits (useful when the field is "
-                         "set automatically).",
-        "key":           "pcp_workflow_rules",
-        "cols":          ["description", "pcp_field_id", "pcp_value",
-                          "workflow_id", "trigger_workflow_id", "displaces_workflow_id"],
-        "labels":        {
-            "description":           "Description",
-            "pcp_field_id":          "PCP Field",
-            "pcp_value":             "PCP Field Contains",
-            "workflow_id":           "Assign to Workflow",
-            "trigger_workflow_id":   "Trigger when entering (optional)",
-            "displaces_workflow_id": "Remove from (optional)",
-        },
-        "widths":        [300, 110, 110, 150, 175, 150],
-        "trigger_field": None,
-        "optional_cols": ["trigger_workflow_id", "displaces_workflow_id"],
-    },
-    {
-        "title":         "Assign to CC Lists",
+        "title":         "CC Lists from Fields",
         "description":   "Adds a person to a Constant Contact email list based on the value of one of their "
                          "profile fields. Example: when a person's 'Member Stage' field contains "
                          "'Member', add them to the 'Members' email list in Constant Contact.",
@@ -126,7 +129,7 @@ TABS = [
         "labels":        {
             "description":  "Description",
             "pcp_field_id": "PCP Field ID",
-            "pcp_value":    "PCP Field Check Value",
+            "pcp_value":    "Field Value",
             "cc_list_id":   "CC List UUID",
         },
         "widths":        [350, 125, 125, 375],
