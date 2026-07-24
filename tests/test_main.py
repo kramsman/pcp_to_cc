@@ -8,7 +8,7 @@ Integration:     pytest tests/ -s -v -m integration
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -206,7 +206,7 @@ class TestWebhookRoute:
         print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
         assert resp.status_code == 200
         assert resp.get_json()["status"] == "ok"
-        mock_add.assert_called_once_with("196549671", "736375")
+        mock_add.assert_called_once_with("196549671", "736375", reason=ANY)
         mock_fetch.assert_not_called()
 
     def test_field_datum_non_matching_value(self, flask_client):

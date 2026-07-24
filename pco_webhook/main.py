@@ -898,11 +898,11 @@ def _active_cards_in_workflow(person_id: str, workflow_id: str, auth) -> list[di
     ]
 
 
-def add_to_workflow(person_id: str, workflow_id: str) -> bool:
-    """Add person to workflow. Skips if person already has an active (non-removed,
-    non-completed) card in the workflow."""
+def add_to_workflow(person_id: str, workflow_id: str, reason: str = "") -> bool:
+    """Add person to workflow, optionally adding a note explaining why. Skips if
+    person already has an active (non-removed, non-completed) card in the workflow."""
     if config.TEST_MODE:
-        logger.info(f"TEST_MODE — would add person {person_id} to workflow {workflow_id}")
+        logger.info(f"TEST_MODE — would add person {person_id} to workflow {workflow_id}  reason='{reason}'")
         return True
     try:
         auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
@@ -916,6 +916,16 @@ def add_to_workflow(person_id: str, workflow_id: str) -> bool:
         r = requests.post(url, json=body, auth=auth, timeout=10)
         r.raise_for_status()
         logger.info(f"add_to_workflow: added person {person_id} to workflow {workflow_id}  HTTP {r.status_code}")
+        if reason:
+            card_id = r.json()["data"]["id"]
+            try:
+                requests.post(
+                    f"{url}/{card_id}/notes",
+                    json={"data": {"type": "WorkflowCardNote", "attributes": {"note": reason}}},
+                    auth=auth, timeout=10,
+                ).raise_for_status()
+            except requests.RequestException as note_err:
+                logger.warning(f"add_to_workflow: could not add note to card {card_id}: {note_err}")
         return True
     except requests.RequestException as e:
         logger.error(f"add_to_workflow failed person {person_id} workflow {workflow_id}: {e}")
@@ -1044,7 +1054,8 @@ def _handle_webhook_post():
             if rule["trigger"] != trigger:
                 continue
             if rule.get("add_to_workflow_id"):
-                add_to_workflow(person_id, rule["add_to_workflow_id"])
+                add_to_workflow(person_id, rule["add_to_workflow_id"],
+                                 reason=f"Added by chain rule: {rule['description']}")
                 matched = True
             if rule.get("remove_workflow_id"):
                 complete_workflow_for_person(
@@ -1065,7 +1076,8 @@ def _handle_webhook_post():
                 person = parse_person(pcp_data)
                 for rule in apply_workflow_rules(person, trigger_workflow_id=workflow_id):
                     matched = True
-                    add_to_workflow(person_id, rule["workflow_id"])
+                    add_to_workflow(person_id, rule["workflow_id"],
+                                     reason=f"Added by automation rule: {rule['description']}")
                     if rule.get("displaces_workflow_id"):
                         complete_workflow_for_person(
                             person_id, rule["displaces_workflow_id"],
@@ -1105,7 +1117,8 @@ def _handle_webhook_post():
             pcp_value = rule["pcp_value"]
             if pcp_value and pcp_value.lower() in value.lower():
                 matched = True
-                add_to_workflow(person_id, rule["workflow_id"])
+                add_to_workflow(person_id, rule["workflow_id"],
+                                 reason=f"Added by automation rule: {rule['description']}")
                 if rule.get("displaces_workflow_id"):
                     complete_workflow_for_person(
                         person_id, rule["displaces_workflow_id"],
@@ -1139,7 +1152,8 @@ def _handle_webhook_post():
                     )
                 if rule.get("add_to_workflow_id"):
                     rule_matched = True
-                    add_to_workflow(person_id, rule["add_to_workflow_id"])
+                    add_to_workflow(person_id, rule["add_to_workflow_id"],
+                                     reason=f"Added via automation — form {form_id} submitted")
                 if rule_matched:
                     matched = True
                     logger.info(f"Form completion rule applied: '{rule['description']}'")
