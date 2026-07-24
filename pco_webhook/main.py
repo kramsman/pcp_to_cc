@@ -1140,11 +1140,6 @@ def _handle_webhook_post():
                 if rule.get("add_to_workflow_id"):
                     rule_matched = True
                     add_to_workflow(person_id, rule["add_to_workflow_id"])
-                    if rule.get("remove_workflow_id"):
-                        complete_workflow_for_person(
-                            person_id, rule["remove_workflow_id"],
-                            reason=f"Replaced by form rule: {rule['description']}",
-                        )
                 if rule_matched:
                     matched = True
                     logger.info(f"Form completion rule applied: '{rule['description']}'")

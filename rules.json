@@ -72,11 +72,16 @@
   ],
   "form_completion_rules": [
     {
-      "description": "Addl Info form submitted",
+      "description": "Initial visitor form by Staff (1192424) submitted",
+      "form_id": "1192424",
+      "complete_workflow_id": "",
+      "add_to_workflow_id": "725397"
+    },
+    {
+      "description": "Tell us about yourself (1197074) submitted",
       "form_id": "1197074",
       "complete_workflow_id": "725397",
-      "add_to_workflow_id": "731975",
-      "remove_workflow_id": ""
+      "add_to_workflow_id": "731975"
     }
   ],
   "pcp_workflow_rules": [

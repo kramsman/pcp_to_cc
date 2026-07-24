@@ -11,7 +11,7 @@ _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uv
 if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QProcess
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QFormLayout,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 RULES_FILE = Path(__file__).parent / "rules.json"
 REPORT_FILE = Path(__file__).parent / "rules_report.html"
+SET_ENV_VARS_SCRIPT = Path(__file__).parent / "set-env-vars.sh"
 
 DROPDOWN_FIELDS = {
     "workflow_id":           "pcp_workflow",
@@ -74,23 +75,21 @@ TABS = [
     },
     {
         "title":         "Workflow Actions on Form Submission",
-        "description":   "Completes, adds to, and/or removes a workflow for a person when they submit a "
-                         "particular form. Example: when someone fills out the 'More Information' form, "
-                         "complete the 'Visitor' workflow. 'Add to Workflow' can be used instead of a PCP "
-                         "native automation, so form-triggered workflow entry lives here with everything else.",
+        "description":   "Completes and/or adds to a workflow for a person when they submit a particular "
+                         "form. Example: when someone fills out the 'More Information' form, complete the "
+                         "'Visitor' workflow. 'Add to Workflow' can be used instead of a PCP native "
+                         "automation, so form-triggered workflow entry lives here with everything else.",
         "key":           "form_completion_rules",
-        "cols":          ["description", "form_id", "complete_workflow_id",
-                          "add_to_workflow_id", "remove_workflow_id"],
+        "cols":          ["description", "form_id", "complete_workflow_id", "add_to_workflow_id"],
         "labels":        {
             "description":          "Description",
             "form_id":              "PCP trigger Form ID",
             "complete_workflow_id": "Workflow to Complete ID",
             "add_to_workflow_id":   "Add to Workflow ID (optional)",
-            "remove_workflow_id":   "Remove from Workflow ID (optional)",
         },
-        "widths":        [300, 130, 150, 150, 150],
+        "widths":        [350, 150, 175, 175],
         "trigger_field": None,
-        "optional_cols": ["complete_workflow_id", "add_to_workflow_id", "remove_workflow_id"],
+        "optional_cols": ["complete_workflow_id", "add_to_workflow_id"],
     },
     {
         "title":         "Assign to Workflows",
@@ -319,17 +318,20 @@ class RuleEditor(QWidget):
             nb.addTab(TabWidget(tab, self.rules[tab["key"]]), tab["title"])
         layout.addWidget(nb)
         btn_row = QHBoxLayout()
+        self.status_label = QLabel("")
+        btn_row.addWidget(self.status_label)
         btn_row.addStretch()
         print_btn = QPushButton("Print Rules")
         print_btn.clicked.connect(self._print_rules)
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self._save)
+        self.save_btn = QPushButton("Save")
+        self.save_btn.clicked.connect(self._save)
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.close)
         btn_row.addWidget(print_btn)
-        btn_row.addWidget(save_btn)
+        btn_row.addWidget(self.save_btn)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
+        self._push_process = None
 
     def _save(self):
         with open(RULES_FILE) as f:
@@ -338,8 +340,27 @@ class RuleEditor(QWidget):
             data[key] = rules
         with open(RULES_FILE, "w") as f:
             json.dump(data, f, indent=2)
-        QMessageBox.information(self, "Saved",
-            "Rules saved to rules.json.\nRun deploy.sh to apply changes to Cloud Run.")
+
+        self.save_btn.setEnabled(False)
+        self.status_label.setText("Pushing rules to Cloud Run…")
+        self._push_process = QProcess(self)
+        self._push_process.setWorkingDirectory(str(Path(__file__).parent))
+        self._push_process.setProcessChannelMode(QProcess.MergedChannels)
+        self._push_process.finished.connect(self._on_env_push_finished)
+        self._push_process.start("bash", [str(SET_ENV_VARS_SCRIPT)])
+
+    def _on_env_push_finished(self, exit_code: int, _exit_status) -> None:
+        output = bytes(self._push_process.readAllStandardOutput()).decode(errors="replace")
+        self.save_btn.setEnabled(True)
+        self.status_label.setText("")
+        if exit_code == 0:
+            QMessageBox.information(self, "Saved",
+                "Rules saved to rules.json and pushed live to Cloud Run.\n"
+                "(Code changes still require running deploy.sh separately.)")
+        else:
+            QMessageBox.warning(self, "Push failed",
+                "Rules were saved to rules.json, but pushing them to Cloud Run failed:\n\n"
+                f"{output}\n\nClick Save to retry, or run ./set-env-vars.sh manually.")
 
     def _cell_html(self, col: str, value: str) -> str:
         """Format one cell. ID columns are shown as 'Name (id)' when the name is known."""
