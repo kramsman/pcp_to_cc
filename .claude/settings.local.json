@@ -35,7 +35,28 @@
       "Bash(.venv/bin/python -m pytest tests/test_main.py::TestApplyRules::test_what_brings_you_social_justice -q)",
       "Bash(gcloud config *)",
       "Bash(gcloud auth *)",
-      "Bash(gcloud secrets *)"
+      "Bash(gcloud secrets *)",
+      "WebSearch",
+      "Bash(grep *)",
+      "Skill(update-config)",
+      "WebFetch(domain:json.schemastore.org)",
+      "Bash(rm ~/.claude/themes/highlight-red.json)",
+      "Bash(rmdir ~/.claude/themes)",
+      "Bash(touch /Users/Denise/.claude/projects/-Users-Denise-Library-CloudStorage-Dropbox-4thU-process-automations-pco-webhook-root/memory/MEMORY.md)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T18:00:00Z\"\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T00:00:00Z\"\n\\(jsonPayload.message:\"workflow_card.created\" OR jsonPayload.message:\"form_submission\" OR jsonPayload.body:\"1192424\" OR jsonPayload.body:\"725397\"\\)\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T17:45:50Z\"\ntimestamp<=\"2026-07-23T17:47:10Z\"\n *)",
+      "Bash(find *)",
+      "Bash(cd *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T20:48:00Z\"\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T20:54:40Z\"\ntimestamp<=\"2026-07-23T20:55:20Z\"\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T20:55:20Z\"\n *)",
+      "Bash(gcloud run services describe *)",
+      "Bash(gcloud projects describe pcp-to-cc *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\nseverity>=WARNING\ntimestamp>=\"2026-06-01T00:00:00Z\"\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\n\\(jsonPayload.body:\"198459095\" OR textPayload:\"198459095\"\\)\n *)",
+      "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T22:49:40Z\"\ntimestamp<=\"2026-07-23T22:52:10Z\"\n *)",
+      "Bash(gcloud logging read *)"
     ]
   }
 }

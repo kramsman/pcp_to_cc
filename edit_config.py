@@ -73,19 +73,24 @@ TABS = [
         "optional_cols": ["add_to_workflow_id", "remove_workflow_id"],
     },
     {
-        "title":         "Complete Workflow via Form",
-        "description":   "Marks a workflow as completed for a person when they submit a particular form. "
-                         "Example: when someone fills out the 'More Information' form, complete the "
-                         "'Visitor' workflow.",
+        "title":         "Workflow Actions on Form Submission",
+        "description":   "Completes, adds to, and/or removes a workflow for a person when they submit a "
+                         "particular form. Example: when someone fills out the 'More Information' form, "
+                         "complete the 'Visitor' workflow. 'Add to Workflow' can be used instead of a PCP "
+                         "native automation, so form-triggered workflow entry lives here with everything else.",
         "key":           "form_completion_rules",
-        "cols":          ["description", "form_id", "complete_workflow_id"],
+        "cols":          ["description", "form_id", "complete_workflow_id",
+                          "add_to_workflow_id", "remove_workflow_id"],
         "labels":        {
             "description":          "Description",
             "form_id":              "PCP trigger Form ID",
             "complete_workflow_id": "Workflow to Complete ID",
+            "add_to_workflow_id":   "Add to Workflow ID (optional)",
+            "remove_workflow_id":   "Remove from Workflow ID (optional)",
         },
-        "widths":        [375, 150, 175],
+        "widths":        [300, 130, 150, 150, 150],
         "trigger_field": None,
+        "optional_cols": ["complete_workflow_id", "add_to_workflow_id", "remove_workflow_id"],
     },
     {
         "title":         "Assign to Workflows",
@@ -361,6 +366,7 @@ class RuleEditor(QWidget):
             "@media print{h2{page-break-after:avoid;} tr{page-break-inside:avoid;}}",
             "</style></head><body>",
             "<h1>PCP → CC Automation Rules</h1>",
+            f"<p class='generated'>Created by {html.escape(Path(__file__).name)}</p>",
             f"<p class='generated'>Generated {html.escape(date.today().isoformat())}</p>",
         ]
         for tab in TABS:

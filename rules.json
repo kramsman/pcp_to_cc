@@ -72,9 +72,11 @@
   ],
   "form_completion_rules": [
     {
-      "description": "Complete Visitor if Addl Info form submitted",
+      "description": "Addl Info form submitted",
       "form_id": "1197074",
-      "complete_workflow_id": "725397"
+      "complete_workflow_id": "725397",
+      "add_to_workflow_id": "731975",
+      "remove_workflow_id": ""
     }
   ],
   "pcp_workflow_rules": [

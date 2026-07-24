@@ -1121,18 +1121,35 @@ def _handle_webhook_post():
             logger.info(f"No field datum rules matched field_id={field_id} person_id={person_id}")
         return jsonify({"status": "ok", "event": event_name, "person_id": person_id}), 200
 
-    # ── Form completion rules — complete workflows on form submit ─────────────
+    # ── Form completion rules — workflow actions on form submit ────────────────
     if event_name == "people.v2.events.form_submission.created":
         form_id   = event.form_id
         person_id = event.person_id
         if form_id and person_id:
+            matched = False
             for rule in config.FORM_COMPLETION_RULES:
-                if rule["form_id"] == form_id:
+                if rule["form_id"] != form_id:
+                    continue
+                rule_matched = False
+                if rule.get("complete_workflow_id"):
+                    rule_matched = True
                     complete_workflow_for_person(
                         person_id, rule["complete_workflow_id"],
                         reason=f"Removed via automation — form {form_id} submitted",
                     )
+                if rule.get("add_to_workflow_id"):
+                    rule_matched = True
+                    add_to_workflow(person_id, rule["add_to_workflow_id"])
+                    if rule.get("remove_workflow_id"):
+                        complete_workflow_for_person(
+                            person_id, rule["remove_workflow_id"],
+                            reason=f"Replaced by form rule: {rule['description']}",
+                        )
+                if rule_matched:
+                    matched = True
                     logger.info(f"Form completion rule applied: '{rule['description']}'")
+            if not matched:
+                logger.info(f"No form rules matched form_id={form_id} person_id={person_id}")
 
     _PERSON_EVENTS = {
         "people.v2.events.person.created",
