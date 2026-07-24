@@ -58,7 +58,7 @@ TABS = [
         "title":         "WF From Field",
         "description":   "Assigns a person to a workflow when one of their profile fields contains a particular string.  "
                          "Example: when the 'Relationship to "
-                         "4th U' field contains 'membership', which shows an interest, assign them to the "
+                         "4th U' field contains 'membership' (which shows an interest) assign them to the "
                          "'Explorer' workflow. "
                          "The check runs whenever the field's value is set or changed. "
                          "'Trigger when entering WF ID' alters what starts the "

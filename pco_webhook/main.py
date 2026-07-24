@@ -641,14 +641,13 @@ def apply_rules(person: dict) -> list[str]:
     return list(matched)
 
 
-def apply_workflow_rules(person: dict, trigger_workflow_id: str = "") -> list[dict]:
+def apply_workflow_rules(person: dict, trigger_workflow_id: str) -> list[dict]:
     """
     Walk PCP_WORKFLOW_RULES and return matching rule dicts (so the caller has
-    access to displaces_workflow_id etc). Only rules whose trigger_workflow_id
-    matches the argument are considered:
-      - trigger_workflow_id="" → run rules with no trigger set (person events)
-      - trigger_workflow_id="731975" → run rules scoped to that workflow's
-        card.created event (override-on-entry rules)
+    access to displaces_workflow_id etc), scoped to rules whose trigger_workflow_id
+    matches the given workflow — i.e. override-on-entry rules fired from that
+    workflow's card.created event. Rules with no trigger_workflow_id are handled
+    separately, by the field_datum event handler.
     """
     matched: list[dict] = []
     custom_fields = person.get("custom_fields", {})
@@ -1082,8 +1081,9 @@ def _handle_webhook_post():
     # A custom field was written or changed. The event carries the field id,
     # person id, and value inline, so PCP_WORKFLOW_RULES can match without a PCP
     # re-fetch — avoiding the eventual-consistency race where a person/form event
-    # fires before the form's field data has settled. Only rules with no
-    # trigger_workflow_id are field-driven; rules WITH one fire on workflow entry.
+    # fires before the form's field data has settled. This is the sole path for
+    # rules with no trigger_workflow_id; rules WITH one fire on workflow entry
+    # instead (see the workflow_card.created block above).
     _FIELD_DATUM_EVENTS = {
         "people.v2.events.field_datum.created",
         "people.v2.events.field_datum.updated",
@@ -1184,21 +1184,9 @@ def _handle_webhook_post():
         logger.info(f"Skipped {name_display}: no email address")
         return jsonify({"status": "skipped", "reason": "no email"}), 200
 
-    # ── Apply PCP workflow rules (only rules with no trigger_workflow_id) ─────
-    # Rules WITH a trigger_workflow_id fire from the workflow_card.created
-    # block instead, where field values are guaranteed to be settled.
-    workflow_rules = apply_workflow_rules(person, trigger_workflow_id="")
-    for rule in workflow_rules:
-        add_to_workflow(person_id, rule["workflow_id"])
-        if rule.get("displaces_workflow_id"):
-            complete_workflow_for_person(
-                person_id, rule["displaces_workflow_id"],
-                reason=f"Replaced by automation rule: {rule['description']}",
-            )
-
     # ── Apply CC list rules ───────────────────────────────────────────────────
     list_ids = apply_rules(person)
-    if not list_ids and not workflow_rules:
+    if not list_ids:
         logger.info(f"Skipped {name_display}: no rules matched")
         return jsonify({"status": "skipped", "reason": "no rules matched"}), 200
 
