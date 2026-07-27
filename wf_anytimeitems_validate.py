@@ -246,8 +246,8 @@ def probe_go_back(auth: tuple, workflow: str, card: str) -> None:
     _emit(f"\nAfter:   stage={a_attrs.get('stage')!r}  "
           f"completed_at={a_attrs.get('completed_at')}  "
           f"current_step={a_step.get('id')}")
-    _emit("\n  → If stage returned to 'ready' with a current_step, a gate MAY be the "
-          "last step. If not, add a trivial 'Confirm & finish' step after the gate.")
+    _emit("\n  → If stage returned to 'ready' with a current_step, the holding step MAY "
+          "be last. If not, add a trivial 'Confirm & finish' step after it.")
 
 
 # ── Probe 4: native send_email ───────────────────────────────────────────────
@@ -322,16 +322,16 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         if match:
             seq = match["attributes"].get("sequence")
             last = max((s["attributes"].get("sequence", 0) for s in steps), default=0)
-            _emit(f"  gate step {gate}: {match['attributes'].get('name')!r} at sequence {seq} of {last}")
+            _emit(f"  holding step {gate}: {match['attributes'].get('name')!r} at position {seq} of {last}")
             if seq == last:
-                _emit("    WARNING: the gate is the LAST step. A staff member skipping it "
+                _emit("    WARNING: the holding step is the LAST step. A staff member skipping it "
                       "completes the card outright, and recovery depends on go_back, which "
                       "is unverified. Add a trailing 'Confirm & finish' step.")
             if seq == 0:
-                _emit("    WARNING: the gate is the FIRST step, so every card parks there "
+                _emit("    WARNING: the holding step is the FIRST step, so every card waits there "
                       "immediately and the sequential steps never run.")
         else:
-            _emit(f"  gate step {gate}: NOT FOUND in this workflow  <-- cards will never be released")
+            _emit(f"  holding step {gate}: NOT FOUND in this workflow  <-- cards will never be released")
             _emit(f"    steps that do exist: "
                   f"{[(s['id'], s['attributes'].get('name')) for s in steps]}")
             problems += 1
@@ -358,9 +358,9 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         for fid, name, opts in selects:
             _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
         for name, dtype in ignored:
-            _emit(f"    data  {'':<10} {name:<34} ({dtype}) — never gates")
+            _emit(f"    data  {'':<10} {name:<34} ({dtype}) — not required")
         if not selects:
-            _emit("    ERROR: no `select` fields on this tab, so nothing gates and the "
+            _emit("    ERROR: no `select` fields on this tab, so nothing is required and the "
                   "card is released immediately.")
             problems += 1
 
@@ -412,8 +412,9 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                           "Move it to another tab.")
 
     _emit(f"\n{'=' * 78}")
-    _emit(f"{problems} blocking problem(s) found." if problems
-          else "All rules validate. Safe to test against a real card.")
+    _emit(f"{problems} setup problem{'s' if problems != 1 else ''} found — fix these or "
+          f"cards will never leave the holding step." if problems
+          else "No setup problems found. Safe to test against a real card.")
     return problems, list(_lines)
 
 
@@ -440,13 +441,13 @@ def render_html(lines: list[str], problems: int) -> str:
     findings = problems_only(lines)
 
     if problems:
-        banner = (f'<div class="bad"><strong>{problems} blocking problem'
-                  f'{"s" if problems != 1 else ""}.</strong> Cards will stop '
-                  f'advancing with nothing in the logs to explain why.</div>')
+        banner = (f'<div class="bad"><strong>{problems} setup problem'
+                  f'{"s" if problems != 1 else ""}.</strong> Fix these or cards will '
+                  f'never leave the holding step, with nothing in the logs to say why.</div>')
     elif findings:
-        banner = '<div class="warn"><strong>No blocking problems.</strong> Notes below.</div>'
+        banner = '<div class="warn"><strong>No setup problems.</strong> Notes below.</div>'
     else:
-        banner = '<div class="ok"><strong>All rules validate.</strong></div>'
+        banner = '<div class="ok"><strong>No setup problems found.</strong></div>'
 
     top = ""
     if findings:
@@ -543,8 +544,9 @@ def main() -> int:
 
     if not os.environ.get("CLOUD_RUN_JOB"):
         from uvbekutils.pyautobek import confirm_with_file_link
-        headline = (f"{problems} blocking problem{'s' if problems != 1 else ''} found."
-                    if problems else "All rules validate.")
+        headline = (f"{problems} setup problem{'s' if problems != 1 else ''} found — "
+                    f"fix these or cards will never leave the holding step."
+                    if problems else "No setup problems found.")
         confirm_with_file_link(
             headline + "\nClick the link below to open the full report.",
             str(OUTFILE),

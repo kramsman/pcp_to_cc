@@ -131,8 +131,8 @@ TABS = [
         "description":   "Lets a workflow require items that can be done at ANY time, which PCO cannot do on its "
                          "own because its steps are strictly sequential. Example: a retreat runs forms → payment → "
                          "arrange a ride, but 'buy a shirt' can happen whenever. Add a 'Outstanding items' step near "
-                         "the end of the workflow and name it below as the Gate Step; the card is held there until "
-                         "every item is done, then released automatically. "
+                         "the end of the workflow and name it below as the Holding Step; the card is held there "
+                         "until every item is done, then released automatically. "
                          "The items themselves are the DROPDOWN fields on the tab you pick — add a new dropdown to "
                          "that tab in PCO and it becomes a required item with no change here and no redeploy. "
                          "Text and paragraph fields on the same tab are ignored, so notes and bios can live there "
@@ -149,7 +149,7 @@ TABS = [
             "description":            "Description",
             "workflow_id":            "Workflow ID",
             "field_tab_id":           "Items Tab (dropdowns on it are the items)",
-            "gate_step_id":           "Gate Step ID",
+            "gate_step_id":           "Holding Step ID",
             "satisfying_values":      "Satisfying values (comma separated)",
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",
@@ -676,11 +676,12 @@ class RuleEditor(QWidget):
             return
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Warning)
-        box.setWindowTitle("Anytime rules — problems found")
+        box.setWindowTitle("Anytime rules — setup problems found")
         box.setText(
             f"Your rules were saved, but checking them against Planning Center "
-            f"found {problems} blocking problem(s).\n\n"
-            "Cards will stop advancing with nothing in the logs to explain why."
+            f"found {problems} setup problem{'s' if problems != 1 else ''}.\n\n"
+            "Fix these or cards will never leave the holding step, with nothing "
+            "in the logs to explain why."
         )
         box.setInformativeText("\n".join(findings))
         box.setDetailedText("\n".join(lines))

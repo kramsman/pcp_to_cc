@@ -196,7 +196,7 @@ def main():
             for f in tab_fields:
                 attrs = f.get("attributes", {})
                 dtype = attrs.get("data_type", "")
-                gate = "  <- can gate" if dtype == "select" else ""
+                gate = "  <- can be required" if dtype == "select" else ""
                 _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<40}  {dtype}{gate}")
                 shown += 1
         _emit(lines, f"\nTotal: {shown} field definitions")
