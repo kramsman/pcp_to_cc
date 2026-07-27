@@ -605,7 +605,7 @@ def main() -> None:
         confirm_with_file_link(
             summary + "\nClick the link below to open the Google Sheet.",
             GOOGLE_SHEET_URL,
-            title="Workflow Cards Report",
+            title="Rpt 'WF People'",
             buttons=["OK"],
             close_on_link_click=True,
         )

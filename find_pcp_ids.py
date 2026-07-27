@@ -233,7 +233,7 @@ def main():
     confirm_with_file_link(
         "Workflows, forms, tabs, field definitions, and CC lists written.",
         out_path,
-        title="PCP IDs",
+        title="Rpt 'PCO and CC Field Ids'",
         buttons=["OK"],
     )
 

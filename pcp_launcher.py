@@ -6,31 +6,33 @@ Launcher menu for PCP / Realm / Constant Contact utilities.
 Running this script refreshes Google credentials (re-authenticating in the
 browser if they have expired), then shows a dialog listing the available tools.
 Pick one and the launcher runs its underlying script — most run inline, while
-"Workflow Assignment" is detached into its own process so it can open its own
-editor window.
+"Edit Rules" is detached into its own process so it can open its own editor
+window.
 
 Menu items:
-    Transfer Data           Transfer member data between Planning Center People
-                            (PCP) and Realm — reads an exported CSV, applies a
-                            column-mapping spreadsheet, and writes a reformatted
-                            CSV ready for import.
-    Find IDs                List every ID used in the rules, from both Planning
-                            Center and Constant Contact: workflows, forms, tabs,
-                            custom fields grouped by tab, and CC lists.
-    Workflow Cards Report   Report every active workflow card across all PCP
-                            workflows to a CSV (workflow, step, person,
-                            assignee, snoozed, overdue, last-updated).
-    Anytime Items Report    Show who still owes the anytime items on a workflow —
-                            those doable in any order but required before it
-                            completes — as an always-current HTML page.
-    Validate Anytime Rules  Check the Anytime WF Items rules against live PCP.
-                            They fail silently when wrong, so run after changing
-                            a rule, a dropdown's options, or a workflow's steps.
-    Workflow Assignment     Edit workflow and CC list rules via a GUI without
-                            touching Python code; changes save to rules.json
-                            (run deploy.sh to apply them to Cloud Run).
-    Check for Updates       Check GitHub for newer versions of the uvbekutils
-                            and bekgoogle libraries and reinstall if available.
+    Edit Rules
+        Edit workflow and CC list rules via a GUI without touching Python code;
+        changes save to rules.json (run deploy.sh to apply them to Cloud Run).
+    Chk 'WF Anytime-Items'
+        Check the Anytime WF Items rules against live PCP. They fail silently
+        when wrong, so run after changing a rule, a dropdown's options, or a
+        workflow's steps.
+    Rpt 'WF People'
+        Report every active workflow card across all PCP workflows to a CSV
+        (workflow, step, person, assignee, snoozed, overdue, last-updated).
+    Rpt 'WF Anytime-Items'
+        Show who still owes the anytime items on a workflow — those doable in
+        any order but required before it completes — as an HTML page.
+    Rpt 'PCO and CC Field Ids'
+        List every ID used in the rules, from both Planning Center and Constant
+        Contact: workflows, forms, tabs, custom fields grouped by tab, CC lists.
+    Xfer data bet PCO and Realm
+        Transfer member data between Planning Center People (PCP) and Realm —
+        reads an exported CSV, applies a column-mapping spreadsheet, and writes
+        a reformatted CSV ready for import.
+    Chk Google and BEK code updates
+        Check GitHub for newer versions of the uvbekutils and bekgoogle
+        libraries and reinstall if available.
 """
 import os
 import sys
@@ -61,43 +63,15 @@ def _ensure_adc_auth() -> None:
         subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
 
 TOOLS = {
-    "Transfer Data": {
-        "script": ROOT_PATH / "pcp_and_realm_csv_transfer.py",
+    "Edit Rules": {
+        "script": ROOT_PATH / "edit_config.py",
         "description": (
-            "Transfer member data between Planning Center People (PCP) and Realm.\n"
-            "Reads an exported CSV, applies a column mapping spreadsheet, and writes\n"
-            "a reformatted CSV ready for import into the destination system."
+            "Edit workflow and CC list rules without modifying Python code.\n"
+            "Changes are saved to rules.json — run deploy.sh to apply to Cloud Run."
         ),
-        "detach": False,
+        "detach": True,
     },
-    "Find IDs": {
-        "script": ROOT_PATH / "find_pcp_ids.py",
-        "description": (
-            "List every ID used in the rules, from both Planning Center and\n"
-            "Constant Contact: workflows, forms, tabs, custom fields grouped by\n"
-            "tab, and CC lists. Use this to find IDs needed for configuration."
-        ),
-        "detach": False,
-    },
-    "Workflow Cards Report": {
-        "script": ROOT_PATH / "pcp_workflow_report.py",
-        "description": (
-            "Report every active workflow card across all PCP workflows.\n"
-            "Writes a CSV with workflow, step, person, assignee, snoozed,\n"
-            "overdue, and last-updated columns."
-        ),
-        "detach": False,
-    },
-    "Anytime Items Report": {
-        "script": ROOT_PATH / "wf_anytimeitems_rpt.py",
-        "description": (
-            "Show who still owes the anytime items on a workflow — the ones that\n"
-            "can be done in any order but must be done before it completes.\n"
-            "Opens an always-current HTML page, sorted by who is missing the most."
-        ),
-        "detach": False,
-    },
-    "Validate Anytime Rules": {
+    "Chk 'WF Anytime-Items'": {
         "script": ROOT_PATH / "wf_anytimeitems_validate.py",
         "description": (
             "Check the Anytime WF Items rules against live Planning Center.\n"
@@ -106,15 +80,43 @@ TOOLS = {
         ),
         "detach": False,
     },
-    "Workflow Assignment": {
-        "script": ROOT_PATH / "edit_config.py",
+    "Rpt 'WF People'": {
+        "script": ROOT_PATH / "pcp_workflow_report.py",
         "description": (
-            "Edit workflow and CC list rules without modifying Python code.\n"
-            "Changes are saved to rules.json — run deploy.sh to apply to Cloud Run."
+            "Report every active workflow card across all PCP workflows.\n"
+            "Writes a CSV with workflow, step, person, assignee, snoozed,\n"
+            "overdue, and last-updated columns."
         ),
-        "detach": True,
+        "detach": False,
     },
-    "Check for Updates": {
+    "Rpt 'WF Anytime-Items'": {
+        "script": ROOT_PATH / "wf_anytimeitems_rpt.py",
+        "description": (
+            "Show who still owes the anytime items on a workflow — the ones that\n"
+            "can be done in any order but must be done before it completes.\n"
+            "Opens an always-current HTML page, sorted by who is missing the most."
+        ),
+        "detach": False,
+    },
+    "Rpt 'PCO and CC Field Ids'": {
+        "script": ROOT_PATH / "find_pcp_ids.py",
+        "description": (
+            "List every ID used in the rules, from both Planning Center and\n"
+            "Constant Contact: workflows, forms, tabs, custom fields grouped by\n"
+            "tab, and CC lists. Use this to find IDs needed for configuration."
+        ),
+        "detach": False,
+    },
+    "Xfer data bet PCO and Realm": {
+        "script": ROOT_PATH / "pcp_and_realm_csv_transfer.py",
+        "description": (
+            "Transfer member data between Planning Center People (PCP) and Realm.\n"
+            "Reads an exported CSV, applies a column mapping spreadsheet, and writes\n"
+            "a reformatted CSV ready for import into the destination system."
+        ),
+        "detach": False,
+    },
+    "Chk Google and BEK code updates": {
         "script": ROOT_PATH / "run_gitupdater.py",
         "description": (
             "Check GitHub for updates to uvbekutils and bekgoogle libraries\n"
@@ -135,7 +137,9 @@ def main() -> None:
     buttons = list(TOOLS.keys()) + ["Cancel"]
     choice = confirm(msg, title="Pick a Utility", buttons=buttons)
 
-    if choice.lower() == "cancel" or choice is None:
+    # Empty (or None) when the dialog is closed with the window button rather
+    # than a choice — test that before calling .lower() on it.
+    if not choice or choice.lower() == "cancel":
         return
 
     for name, info in TOOLS.items():
