@@ -761,7 +761,7 @@ def main():
         pass
 
     # Fetch BEFORE creating the QApplication. When this script is launched
-    # as a subprocess of another Qt app (pcp_launcher.py), having two Qt
+    # as a subprocess of another Qt app (pco_utils.py), having two Qt
     # apps alive while gRPC/network calls run on the child hangs or
     # silently empties the dropdowns on macOS. Doing the fetch first means
     # there is no Qt state in this process during the network work, and

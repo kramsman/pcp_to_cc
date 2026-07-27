@@ -95,7 +95,7 @@ else:
 
 # ─── Workflow Field Rules ─────────────────────────────────────────────────────
 # When a workflow card event fires, set a custom field on the person's profile.
-# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+# Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # workflow_id: PCP workflow ID ("" matches any workflow) — from find_pcp_ids.py
 # field_id:    PCP field definition ID — from find_pcp_ids.py
@@ -109,7 +109,7 @@ PCP_WORKFLOW_RULES      = _rules.get("pcp_workflow_rules", [])
 
 # ─── Workflow Chain Rules ─────────────────────────────────────────────────────
 # When a workflow card event fires, automatically add the person to another workflow.
-# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+# Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # workflow_id:        source workflow ID — must match the completed workflow
 # trigger:            "completed" = workflow card marked complete
@@ -121,12 +121,12 @@ WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 # PCP workflows are strictly sequential, but some items ("buy a shirt") can be
 # done at any point and must still be done before the workflow completes. Each
 # such workflow gets a gate step the webhook only promotes once every item is
-# satisfied. Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+# satisfied. Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # workflow_id:            PCP workflow the gate belongs to — from find_pcp_ids.py
 # field_tab_id:           PCP tab whose dropdown fields ARE the items. Nothing in
 #                         PCP links a tab to a workflow; this line is that link.
-#                         Discover with: python probe_pco.py tabs
+#                         Discover with: python wf_anytimeitems_validate.py tabs
 # gate_step_id:           the "Outstanding items" step held until all items pass
 # satisfying_values:      dropdown values that count as done — everything else,
 #                         including blank, leaves the item outstanding
@@ -177,11 +177,11 @@ def anytime_workflows_for_tab(tab_id: str) -> list[dict]:
 
 # ─── CC List Rules ────────────────────────────────────────────────────────────
 # Controls which PCP profiles get added to which CC lists.
-# Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+# Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # pcp_field_id: PCP field definition ID — from find_pcp_ids.py
 # pcp_value:    field value that triggers the rule (case-sensitive)
-# cc_list_id:   Constant Contact list UUID (find via pcp_launcher → Find CC IDs)
+# cc_list_id:   Constant Contact list UUID (find via pco_utils.py → Rpt 'PCO and CC Field Ids')
 
 CC_LIST_RULES = [
     {**r, "cc_lists": [r["cc_list_id"]]} for r in _rules["cc_list_rules"]
