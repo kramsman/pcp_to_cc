@@ -98,11 +98,22 @@ def _emit(lines: list[str], text: str) -> None:
 
 def fetch_cc_lists() -> list:
     """Return list of {id, name} dicts for all CC contact lists."""
+    return [{"id": l["list_id"], "name": l.get("name", "")} for l in fetch_cc_lists_full()]
+
+
+def fetch_cc_lists_full() -> list:
+    """Return CC contact lists as the API gives them, with status and counts.
+
+    fetch_cc_lists() trims these to {id, name} for dropdowns; the combined ID
+    report wants the extra columns.
+    """
     print("Fetching CC credentials...")
     access_token = _get_secret("CC_ACCESS_TOKEN")
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
     lists = []
-    next_url = f"{CC_API_BASE}/contact_lists"
+    # include_count is required for membership_count — without it the field is
+    # absent and any "Members" column silently renders blank.
+    next_url = f"{CC_API_BASE}/contact_lists?include_count=true"
     refreshed = False
     print("Fetching CC contact lists...")
     while next_url:
@@ -119,7 +130,7 @@ def fetch_cc_lists() -> list:
         lists.extend(data.get("lists", []))
         next_url = (data.get("_links") or {}).get("next", {}).get("href")
     print(f"  {len(lists)} CC lists")
-    return [{"id": l["list_id"], "name": l.get("name", "")} for l in lists]
+    return lists
 
 
 def main():
@@ -127,50 +138,29 @@ def main():
         print("ERROR: CLOUD_PROJECT_ID not set in .env")
         sys.exit(1)
 
-    access_token = _get_secret("CC_ACCESS_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json",
-    }
-
     lines: list[str] = []
     _emit(lines, "\n=== Contact Lists ===\n")
 
-    lists = []
-    next_url = f"{CC_API_BASE}/contact_lists"
-    refreshed = False
-    while next_url:
-        try:
-            resp = requests.get(next_url, headers=headers, timeout=10)
-            if resp.status_code == 401 and not refreshed:
-                new_token = _refresh_cc_token()
-                if not new_token:
-                    print("ERROR: Could not refresh CC token. Re-run the OAuth flow (see setup guide).")
-                    sys.exit(1)
-                headers["Authorization"] = f"Bearer {new_token}"
-                refreshed = True
-                continue
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            print(f"ERROR: {e}")
-            if hasattr(e, "response") and e.response is not None:
-                print(f"Response body: {e.response.text}")
-            sys.exit(1)
-        data = resp.json()
-        lists.extend(data.get("lists", []))
-        next_url = data.get("_links", {}).get("next", {}).get("href")
+    # Shares fetch_cc_lists_full so this report, the combined Find IDs report,
+    # and the config editor's dropdown can never disagree about what CC returned.
+    try:
+        lists = fetch_cc_lists_full()
+    except requests.RequestException as e:
+        print(f"ERROR: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            print(f"Response body: {e.response.text}")
+        sys.exit(1)
 
     if not lists:
         _emit(lines, "No contact lists found.")
     else:
-        _emit(lines, f"{'UUID':<40}  {'Name':<40}  {'Status':<8}  Members")
-        _emit(lines, "-" * 100)
+        # No Status column: CC v3 contact lists carry no status field, so it
+        # only ever rendered blank.
+        _emit(lines, f"{'UUID':<40}  {'Name':<44}  Members")
+        _emit(lines, "-" * 95)
         for lst in lists:
-            uuid         = lst.get("list_id", "")
-            name         = lst.get("name", "")
-            status       = lst.get("status", "")
-            member_count = lst.get("membership_count", "")
-            _emit(lines, f"{uuid:<40}  {name:<40}  {status:<8}  {member_count}")
+            _emit(lines, f"{lst.get('list_id',''):<40}  {lst.get('name',''):<44}  "
+                         f"{lst.get('membership_count','')}")
         _emit(lines, f"\nTotal: {len(lists)} contact lists")
 
     out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"

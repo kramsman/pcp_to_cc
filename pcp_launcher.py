@@ -14,11 +14,9 @@ Menu items:
                             (PCP) and Realm — reads an exported CSV, applies a
                             column-mapping spreadsheet, and writes a reformatted
                             CSV ready for import.
-    Find PCP IDs            List PCP field definitions with each field's numeric
-                            ID, name, and type, for locating IDs used in config.
-    Find CC IDs             List Constant Contact lists with each list's UUID,
-                            name, status, and member count, for locating IDs
-                            used in config.
+    Find IDs                List every ID used in the rules, from both Planning
+                            Center and Constant Contact: workflows, forms, tabs,
+                            custom fields grouped by tab, and CC lists.
     Workflow Cards Report   Report every active workflow card across all PCP
                             workflows to a CSV (workflow, step, person,
                             assignee, snoozed, overdue, last-updated).
@@ -72,21 +70,12 @@ TOOLS = {
         ),
         "detach": False,
     },
-    "Find PCP IDs": {
+    "Find IDs": {
         "script": ROOT_PATH / "find_pcp_ids.py",
         "description": (
-            "List all selected definitions in Planning Center People,\n"
-            "showing each field's numeric ID, name, and type.\n"
-            "Use this to find field IDs needed for configuration."
-        ),
-        "detach": False,
-    },
-    "Find CC IDs": {
-        "script": ROOT_PATH / "find_cc_ids.py",
-        "description": (
-            "List all selected definitions in Constant Contact,\n"
-            "showing each list's UUID, name, status, and member count.\n"
-            "Use this to find list IDs needed for configuration."
+            "List every ID used in the rules, from both Planning Center and\n"
+            "Constant Contact: workflows, forms, tabs, custom fields grouped by\n"
+            "tab, and CC lists. Use this to find IDs needed for configuration."
         ),
         "detach": False,
     },

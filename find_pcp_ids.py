@@ -1,7 +1,12 @@
 """
-Helper script: list workflows, forms, and custom field definitions from Planning Center People.
+Helper script: list every ID used in rules.json, from both Planning Center People
+and Constant Contact, in one report.
 
-Output order: Workflows → Forms → Custom Fields
+Output order: Workflows → Forms → Field Tabs → Custom Fields (by tab)
+              → Constant Contact Lists
+Custom fields are grouped by the tab they appear on, and `select` fields are
+marked, since only those can gate an anytime-items workflow.
+
 Results are printed to the terminal and saved to find_pcp_ids.txt.
 
 Prerequisites:
@@ -196,13 +201,37 @@ def main():
                 shown += 1
         _emit(lines, f"\nTotal: {shown} field definitions")
 
+    # --- Constant Contact Lists ---
+    # Folded in here so one report answers "what is the ID of X", whichever
+    # system X lives in. A CC auth failure must not cost you the PCP report,
+    # so it degrades to a note rather than an exit.
+    _emit(lines, "\n\n=== Constant Contact Lists ===\n")
+    try:
+        from find_cc_ids import fetch_cc_lists_full
+        cc_lists = fetch_cc_lists_full()
+    except BaseException as e:
+        cc_lists = None
+        _emit(lines, f"Could not fetch Constant Contact lists: {e}")
+        _emit(lines, "(PCP results above are unaffected. Check CC_ACCESS_TOKEN "
+                     "in Secret Manager, or run find_cc_ids.py for detail.)")
+    if cc_lists is not None:
+        if not cc_lists:
+            _emit(lines, "No contact lists found.")
+        else:
+            _emit(lines, f"{'UUID':<40}  {'Name':<44}  Members")
+            _emit(lines, "-" * 95)
+            for lst in cc_lists:
+                _emit(lines, f"{lst.get('list_id',''):<40}  {lst.get('name',''):<44}  "
+                             f"{lst.get('membership_count','')}")
+            _emit(lines, f"\nTotal: {len(cc_lists)} contact lists")
+
     out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines))
     print(f"\nSaved to: {out_path}")
 
     confirm_with_file_link(
-        "Workflows, forms, and field definitions written.",
+        "Workflows, forms, tabs, field definitions, and CC lists written.",
         out_path,
         title="PCP IDs",
         buttons=["OK"],
