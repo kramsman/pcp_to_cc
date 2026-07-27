@@ -1320,6 +1320,18 @@ def build_readiness(workflow_id: str) -> dict:
     items = _gate_items(cfg, auth)
     notes_field = str(cfg.get("notes_field_id", "")) or None
 
+    # Names for the header — an ID on its own tells the reader nothing.
+    def _name_of(path: str) -> str:
+        try:
+            r = requests.get(f"{config.PCP_API_BASE}/{path}", auth=auth, timeout=10)
+            r.raise_for_status()
+            return r.json().get("data", {}).get("attributes", {}).get("name", "")
+        except requests.RequestException:
+            return ""
+
+    workflow_name = _name_of(f"workflows/{workflow_id}")
+    tab_name = _name_of(f"tabs/{cfg['field_tab_id']}")
+
     cards = requests.get(
         f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
         params={"include": "person", "per_page": 100}, auth=auth, timeout=15,
@@ -1378,6 +1390,7 @@ def build_readiness(workflow_id: str) -> dict:
     rows.sort(key=lambda r: (-r["missing"], r["name"]))
     return {
         "config": cfg, "items": items, "rows": rows,
+        "workflow_name": workflow_name, "tab_name": tab_name,
         "totals": {
             "enrolled":    len(rows),
             "ready":       sum(1 for r in rows if r["missing"] == 0),
@@ -1391,6 +1404,13 @@ def render_readiness_html(data: dict) -> str:
     """Render the matrix as a standalone page — no external assets, no CDN."""
     cfg, items, rows, totals = data["config"], data["items"], data["rows"], data["totals"]
     esc = html_escape
+
+    # Prefer the workflow's real PCP name in the heading; the rule's description
+    # is the automation's label for itself and means little to a reader.
+    wf_name, tab_name = data.get("workflow_name", ""), data.get("tab_name", "")
+    wf_label = wf_name or cfg.get("description", "Workflow")
+    wf_suffix = f" ({wf_name})" if wf_name else ""
+    tab_suffix = f" ({tab_name})" if tab_name else ""
 
     head = "".join(f"<th>{esc(i['name'])}</th>" for i in items)
     body = []
@@ -1452,10 +1472,11 @@ def render_readiness_html(data: dict) -> str:
    .todo {{ color:#ff8a80; }} .done {{ color:#7ddc9a; }}
  }}
 </style></head><body>
-<h1>{esc(cfg.get('description','Readiness'))} — Readiness</h1>
-<div class="sub">workflow {esc(str(cfg.get('workflow_id')))} ·
- items from tab {esc(str(cfg.get('field_tab_id')))} ·
- generated {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<h1>{esc(wf_label)} — anytime items still needed</h1>
+<div class="sub">Workflow ID {esc(str(cfg.get('workflow_id')))}{esc(wf_suffix)} ·
+ Items from tab ID {esc(str(cfg.get('field_tab_id')))}{esc(tab_suffix)} ·
+ Rule: {esc(cfg.get('description', ''))} ·
+ Run {datetime.now().strftime('%d %b %Y, %-I:%M %p')}</div>
 <div class="totals"><strong>{totals['enrolled']} enrolled · {totals['ready']} ready ·
  {totals['outstanding']} outstanding</strong><br>{summary}</div>
 <div class="wrap"><table>

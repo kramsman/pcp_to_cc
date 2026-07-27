@@ -5,9 +5,10 @@ Launcher menu for PCP / Realm / Constant Contact utilities.
 
 Running this script refreshes Google credentials (re-authenticating in the
 browser if they have expired), then shows a dialog listing the available tools.
-Pick one and the launcher runs its underlying script — most run inline, while
-"Edit Rules" is detached into its own process so it can open its own editor
-window.
+Pick one and the launcher runs its underlying script, then shows the menu again
+so several tools can be run in one sitting. Choose Cancel, or close the window,
+to finish. "Edit Rules" is the exception — it opens its own window and ends the
+session, because the editor only accepts input when no other Qt app is alive.
 
 Menu items:
     Edit Rules
@@ -69,6 +70,10 @@ TOOLS = {
             "Edit workflow and CC list rules without modifying Python code.\n"
             "Changes are saved to rules.json — run deploy.sh to apply to Cloud Run."
         ),
+        # Must detach. Tried running it inline so the menu could come back
+        # afterwards, but with this launcher's QApplication still alive the
+        # editor's table stops receiving clicks — rules cannot be selected.
+        # The parent has to be gone before the editor opens its window.
         "detach": True,
     },
     "Chk 'WF Anytime-Items'": {
@@ -180,8 +185,9 @@ def main() -> None:
             continue
 
         if info.get("detach"):
-            # The one tool that cannot loop: it opens its own Qt window, and
-            # this process must exit first so there is only one QApplication.
+            # Detached tools end the session: this process must exit so the
+            # child's window is the only Qt app alive, otherwise it will not
+            # accept input. Everything else loops back to the menu.
             _run_detached(info)
             return
 
