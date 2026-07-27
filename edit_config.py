@@ -1,5 +1,8 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
+# todo: add cc lists to find id report as are shown in edit_config cc dropdown
+# todo: prefix custom variable names with tab (screen name) to pinpoint and differentiate same names
+
 import html
 import json
 import sys
@@ -20,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 RULES_FILE = Path(__file__).parent / "rules.json"
+ANYTIME_KEY = "anytime_item_workflows"
 REPORT_FILE = Path(__file__).parent / "rules_report.html"
 SET_ENV_VARS_SCRIPT = Path(__file__).parent / "set-env-vars.sh"
 
@@ -159,9 +163,12 @@ TABS = [
             "gate_step_id":      {"source": "workflow_id",  "fetch": "workflow_steps"},
             "satisfying_values": {"source": "field_tab_id", "fetch": "tab_option_values",
                                   "multi": True},
+            # Offers only dropdowns that live off the items tab, so a text field
+            # or an items-tab field can no longer be chosen here — both would
+            # park every card forever.
+            "requires_person_fields": {"source": "field_tab_id", "fetch": "durable_fields",
+                                       "multi": True},
         },
-        # Several ids at once, so a checkbox list rather than a single dropdown.
-        "multi_cols": {"requires_person_fields": "pcp_field"},
     },
     {
         "title":         "CC Lists from Fields",
@@ -294,10 +301,38 @@ def fetch_tab_option_values(tab_id: str) -> list[dict]:
     return result
 
 
+def fetch_durable_field_choices(tab_id: str) -> list[dict]:
+    """Fields eligible as durable prerequisites for a workflow.
+
+    A durable prerequisite is evaluated exactly like an item, so it must be a
+    dropdown — a text field's prose can never equal "Done" and would park every
+    card forever. It must also live off the items tab, since fields on that tab
+    are cleared on re-enrolment, which is the opposite of durable.
+    """
+    return [
+        f for f in _api_cache.get("pcp_field", [])
+        if f.get("data_type") == "select" and str(f.get("tab_id", "")) != str(tab_id)
+    ]
+
+
 DEPENDENT_FETCHERS = {
     "workflow_steps":    fetch_workflow_steps,
     "tab_option_values": fetch_tab_option_values,
+    "durable_fields":    fetch_durable_field_choices,
 }
+
+
+def resolve_name(value: str) -> str:
+    """Render an id as "1089420: 'Edited Bio'" when the name is known.
+
+    A bare id in a warning tells nobody which field is at fault, and these
+    warnings exist precisely to be acted on.
+    """
+    for items in _api_cache.values():
+        for item in items:
+            if str(item.get("id")) == str(value):
+                return f"{value}: {item.get('name', '')!r}"
+    return str(value)
 
 
 class MultiSelectList(QListWidget):
@@ -310,7 +345,7 @@ class MultiSelectList(QListWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMaximumHeight(110)
+        self.setMaximumHeight(160)
         self.setAlternatingRowColors(True)
         # An item view with input methods enabled swallows keystrokes meant for
         # other widgets on macOS, which leaves the text fields in this dialog
@@ -320,16 +355,30 @@ class MultiSelectList(QListWidget):
         self.viewport().setAttribute(Qt.WA_InputMethodEnabled, False)
 
     def set_items(self, items: list[dict], selected_csv: str) -> None:
+        """Load choices, checked ones first.
+
+        Ordering matters: these lists can run to every field definition in the
+        org, and a checked row scrolled out of sight is one nobody can find to
+        uncheck. Anything already selected sorts to the top.
+        """
         selected = [s.strip() for s in (selected_csv or "").split(",") if s.strip()]
         self.clear()
-        offered = set()
-        for item in items:
-            label = item["name"] if item["name"] == item["id"] else f"{item['name']} ({item['id']})"
-            self._add(label, item["id"], item["id"] in selected)
-            offered.add(item["id"])
-        for missing in selected:
+        offered = {item["id"] for item in items}
+
+        for missing in selected:            # selected but no longer offered
             if missing not in offered:
-                self._add(f"⚠ {missing} (not offered)", missing, True)
+                self._add(f"⚠ {resolve_name(missing)} — not a valid choice, "
+                          f"uncheck to remove", missing, True)
+        for item in items:                  # selected and still offered
+            if item["id"] in selected:
+                self._add(self._label(item), item["id"], True)
+        for item in items:                  # everything else
+            if item["id"] not in selected:
+                self._add(self._label(item), item["id"], False)
+
+    @staticmethod
+    def _label(item: dict) -> str:
+        return item["name"] if item["name"] == item["id"] else f"{item['name']} ({item['id']})"
 
     def _add(self, label: str, value: str, checked: bool) -> None:
         row = QListWidgetItem(label)
@@ -389,7 +438,7 @@ class RuleDialog(QDialog):
                 if idx >= 0:
                     widget.setCurrentIndex(idx)
                 elif existing_id:
-                    widget.insertItem(0, f"⚠ Unknown: {existing_id}", existing_id)
+                    widget.insertItem(0, f"⚠ Unknown: {resolve_name(existing_id)}", existing_id)
                     widget.setCurrentIndex(0)
                 self._id_dropdown_cols.add(col)
             elif col == tab.get("trigger_field"):
@@ -442,7 +491,7 @@ class RuleDialog(QDialog):
         if idx >= 0:
             widget.setCurrentIndex(idx)
         elif existing:
-            widget.insertItem(1, f"⚠ Unknown: {existing}", existing)
+            widget.insertItem(1, f"⚠ Unknown: {resolve_name(existing)}", existing)
             widget.setCurrentIndex(1)
 
     def values(self) -> dict:
@@ -557,6 +606,9 @@ class RuleEditor(QWidget):
         with open(RULES_FILE) as f:
             data = json.load(f)
         self.rules = {tab["key"]: list(data[tab["key"]]) for tab in TABS}
+        # Snapshot so save can tell whether the anytime rules actually changed —
+        # validating hits the PCP API several times and is only worth it then.
+        self._anytime_on_open = json.dumps(data.get(ANYTIME_KEY, []), sort_keys=True)
         layout = QVBoxLayout(self)
         nb = QTabWidget()
         for tab in TABS:
@@ -594,6 +646,46 @@ class RuleEditor(QWidget):
         self._push_process.finished.connect(self._on_env_push_finished)
         self._push_process.start("bash", [str(SET_ENV_VARS_SCRIPT)])
 
+    def _validate_anytime_rules(self) -> None:
+        """After saving a changed anytime rule, check it against live PCP.
+
+        Runs only when the anytime section actually changed, and only reports
+        problems — a clean run says nothing, so this never adds friction to the
+        common case. It cannot block or undo the save: the rules are already
+        written, and a mid-edit state the user means to come back to is their
+        business. Failure to reach PCP is silent for the same reason.
+        """
+        current = json.dumps(self.rules.get(ANYTIME_KEY, []), sort_keys=True)
+        if current == self._anytime_on_open:
+            return
+        self._anytime_on_open = current
+        try:
+            sys.path.insert(0, str(Path(__file__).parent))
+            from wf_anytimeitems_validate import problems_only, validate_rules
+            problems, lines = validate_rules()
+        except BaseException as e:
+            print(f"Warning: could not validate anytime rules ({e})")
+            return
+        findings = problems_only(lines)
+        if not problems:
+            # Non-blocking notes go to the console, never a dialog. A deliberate
+            # choice like a spelling variant in satisfying_values produces a NOTE
+            # on every save, and a popup you learn to dismiss is worse than none.
+            for line in findings:
+                print(f"anytime rules: {line}")
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Anytime rules — problems found")
+        box.setText(
+            f"Your rules were saved, but checking them against Planning Center "
+            f"found {problems} blocking problem(s).\n\n"
+            "Cards will stop advancing with nothing in the logs to explain why."
+        )
+        box.setInformativeText("\n".join(findings))
+        box.setDetailedText("\n".join(lines))
+        box.exec()
+
     def _on_env_push_finished(self, exit_code: int, _exit_status) -> None:
         output = bytes(self._push_process.readAllStandardOutput()).decode(errors="replace")
         self.save_btn.setEnabled(True)
@@ -602,6 +694,7 @@ class RuleEditor(QWidget):
             QMessageBox.information(self, "Saved",
                 "Rules saved to rules.json and pushed live to Cloud Run.\n"
                 "(Code changes still require running deploy.sh separately.)")
+            self._validate_anytime_rules()
         else:
             QMessageBox.warning(self, "Push failed",
                 "Rules were saved to rules.json, but pushing them to Cloud Run failed:\n\n"

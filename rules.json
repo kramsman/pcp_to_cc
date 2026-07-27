@@ -107,8 +107,8 @@
       "field_tab_id": "263604",
       "gate_step_id": "2096759",
       "satisfying_values": "Done, Not Needed, Not needed",
-      "requires_person_fields": "1089420",
-      "notes_field_id": "1089422"
+      "requires_person_fields": "",
+      "notes_field_id": ""
     }
   ],
   "cc_list_rules": [

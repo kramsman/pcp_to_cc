@@ -22,6 +22,12 @@ Menu items:
     Workflow Cards Report   Report every active workflow card across all PCP
                             workflows to a CSV (workflow, step, person,
                             assignee, snoozed, overdue, last-updated).
+    Anytime Items Report    Show who still owes the anytime items on a workflow —
+                            those doable in any order but required before it
+                            completes — as an always-current HTML page.
+    Validate Anytime Rules  Check the Anytime WF Items rules against live PCP.
+                            They fail silently when wrong, so run after changing
+                            a rule, a dropdown's options, or a workflow's steps.
     Workflow Assignment     Edit workflow and CC list rules via a GUI without
                             touching Python code; changes save to rules.json
                             (run deploy.sh to apply them to Cloud Run).
@@ -90,6 +96,24 @@ TOOLS = {
             "Report every active workflow card across all PCP workflows.\n"
             "Writes a CSV with workflow, step, person, assignee, snoozed,\n"
             "overdue, and last-updated columns."
+        ),
+        "detach": False,
+    },
+    "Anytime Items Report": {
+        "script": ROOT_PATH / "wf_anytimeitems_rpt.py",
+        "description": (
+            "Show who still owes the anytime items on a workflow — the ones that\n"
+            "can be done in any order but must be done before it completes.\n"
+            "Opens an always-current HTML page, sorted by who is missing the most."
+        ),
+        "detach": False,
+    },
+    "Validate Anytime Rules": {
+        "script": ROOT_PATH / "wf_anytimeitems_validate.py",
+        "description": (
+            "Check the Anytime WF Items rules against live Planning Center.\n"
+            "These fail silently when wrong — cards just stop advancing — so run\n"
+            "this after changing a rule, a dropdown's options, or a workflow's steps."
         ),
         "detach": False,
     },

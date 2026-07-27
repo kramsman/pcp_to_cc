@@ -58,7 +58,12 @@
       "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T22:49:40Z\"\ntimestamp<=\"2026-07-23T22:52:10Z\"\n *)",
       "Bash(gcloud logging read *)",
       "Bash(TEST_MODE=true uv run python -c ' *)",
-      "Bash(QT_QPA_PLATFORM=offscreen uv run python -c ' *)"
+      "Bash(QT_QPA_PLATFORM=offscreen uv run python -c ' *)",
+      "Bash(sed -i '' 's/probe_pco\\\\.py/wf_anytimeitems_validate.py/g; s/probe_pco\\\\.txt/wf_anytimeitems_validate.txt/g' wf_anytimeitems_validate.py)",
+      "Bash(sed -i '' 's|/probe_pco\\\\.txt|/wf_anytimeitems_validate.txt|' .gitignore)",
+      "Bash(pkill -f \"QT_QPA_PLATFORM=offscreen\")",
+      "Bash(pkill -f \"edit_config as ec\")",
+      "Bash(QT_QPA_PLATFORM=offscreen timeout 240 uv run python -c ' *)"
     ]
   }
 }

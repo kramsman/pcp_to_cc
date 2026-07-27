@@ -1,0 +1,481 @@
+"""
+Check the "Anytime WF Items" rules in rules.json against live Planning Center.
+
+These rules fail SILENTLY when wrong — a gate step belonging to another workflow,
+a satisfying value matching no real dropdown option, or a text field listed as a
+durable prerequisite all produce the same symptom: cards stop advancing, with
+nothing in the PCO UI or the webhook logs to say why. Run this after any change
+to an anytime rule, to a dropdown's options, or to a workflow's steps.
+
+    validate    (default) check every configured rule.  READ-ONLY.
+
+Also carries the one-off API probes used to design the feature. They need a
+DISPOSABLE test card, and the last two change it:
+
+    tabs        How do field definitions relate to tabs?      read-only
+    activities  What strings does WorkflowCardActivity.type use?  read-only
+    go-back     Does go_back work on an already-completed card?   MUTATES
+    send-email  What does a card's native send_email do?          SENDS EMAIL
+
+Results are printed and appended to wf_anytimeitems_validate.txt.
+
+Prerequisites:
+    1. .env has CLOUD_PROJECT_ID set.
+    2. PCP_APP_ID and PCP_SECRET are stored in GCP Secret Manager.
+    3. gcloud auth application-default login has been run.
+
+Usage:
+    python wf_anytimeitems_validate.py
+    python wf_anytimeitems_validate.py tabs --tab 263604
+    python wf_anytimeitems_validate.py activities --workflow 730471 --card 48256640
+    python wf_anytimeitems_validate.py go-back --workflow 730471 --card 48256640 --i-mean-it
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+os.environ.setdefault("GRPC_VERBOSITY", "ERROR")  # suppress gRPC noise before grpc loads
+
+import requests  # noqa: E402
+from dotenv import load_dotenv  # noqa: E402
+from google.api_core import retry as api_retry  # noqa: E402
+from google.cloud import secretmanager  # noqa: E402
+
+load_dotenv()
+
+PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
+HEADERS = {"User-Agent": "pco_webhook (office2@4thu.org)"}
+OUTFILE = "wf_anytimeitems_validate.txt"
+
+_project_id = os.environ.get("CLOUD_PROJECT_ID", "")
+_client = None
+_cache: dict[str, str] = {}
+_lines: list[str] = []
+
+
+def _get_secret(secret_id: str) -> str:
+    """Read a secret from GCP Secret Manager, re-authenticating ADC if needed."""
+    global _client
+    if secret_id not in _cache:
+        if _client is None:
+            _client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{_project_id}/secrets/{secret_id}/versions/latest"
+        try:
+            resp = _client.access_secret_version(
+                request={"name": name},
+                retry=api_retry.Retry(deadline=5.0),
+            )
+        except Exception as e:
+            if "Reauthentication is needed" in str(e):
+                from bekgoogle import ensure_adc_auth
+                ensure_adc_auth()
+                _client = secretmanager.SecretManagerServiceClient()
+                resp = _client.access_secret_version(request={"name": name})
+            else:
+                raise
+        _cache[secret_id] = resp.payload.data.decode("UTF-8")
+    return _cache[secret_id]
+
+
+def _emit(text: str = "") -> None:
+    _lines.append(text)
+    print(text)
+
+
+def _auth() -> tuple:
+    return (_get_secret("PCP_APP_ID"), _get_secret("PCP_SECRET"))
+
+
+def _get(path: str, auth: tuple, params: dict | None = None) -> dict:
+    """GET one page from the PCP API and return the parsed body ({} on error)."""
+    url = path if path.startswith("http") else f"{PCP_API_BASE}/{path}"
+    resp = requests.get(url, auth=auth, params=params, headers=HEADERS, timeout=15)
+    if not resp.ok:
+        _emit(f"  HTTP {resp.status_code}  {resp.text[:400]}")
+        return {}
+    return resp.json()
+
+
+def _post(path: str, auth: tuple, body: dict | None = None) -> requests.Response:
+    """POST to the PCP API, echoing status and body so error text is captured."""
+    url = path if path.startswith("http") else f"{PCP_API_BASE}/{path}"
+    resp = requests.post(url, auth=auth, json=body, headers=HEADERS, timeout=15)
+    _emit(f"  → HTTP {resp.status_code}")
+    if resp.text:
+        _emit(f"  → body: {resp.text[:800]}")
+    return resp
+
+
+# ── Probe 1: tabs → field definitions (DESIGN-CRITICAL) ──────────────────────
+
+def probe_tabs(auth: tuple, tab_id: str | None = None) -> None:
+    """Establish whether field definitions can be discovered from a tab.
+
+    The design depends on this: config names a tab, and the items are whatever
+    fields live on it. If FieldDefinition exposes no usable tab link, config must
+    instead list field IDs explicitly (see the plan's fallback).
+    """
+    _emit("=" * 78)
+    _emit("PROBE 1 — tabs → field definitions   (DESIGN-CRITICAL)")
+    _emit("=" * 78)
+
+    tabs = _get("tabs", auth, {"per_page": 100}).get("data", [])
+    _emit(f"\nGET /tabs  →  {len(tabs)} tabs")
+    for t in tabs:
+        _emit(f"  {t['id']:<10}  {t['attributes'].get('name', '')!r}"
+              f"   sequence={t['attributes'].get('sequence')}")
+    if not tabs:
+        _emit("\n  NO TABS FOUND — design fallback required (explicit item_field_ids).")
+        return
+
+    chosen = next((t for t in tabs if t["id"] == tab_id), tabs[0])
+    tab_id = chosen["id"]
+    tab_name = chosen["attributes"].get("name", "")
+    _emit(f"\nGET /tabs/{tab_id}/field_definitions   (tab {tab_name!r})")
+    body = _get(f"tabs/{tab_id}/field_definitions", auth,
+                {"include": "field_options", "per_page": 100})
+    fields = body.get("data", [])
+    _emit(f"  → {len(fields)} field definitions on this tab")
+
+    options_by_id = {
+        item["id"]: item["attributes"]["value"]
+        for item in body.get("included", [])
+        if item.get("type") == "FieldOption"
+    }
+    for f in fields:
+        attrs = f["attributes"]
+        dtype = attrs.get("data_type", "?")
+        line = f"  {f['id']:<10}  {attrs.get('name', ''):<38}  {dtype}"
+        if dtype in ("select", "checkboxes"):
+            related = (f.get("relationships", {}).get("field_options", {}).get("data") or [])
+            opts = [options_by_id[r["id"]] for r in related if r["id"] in options_by_id]
+            line += f"  options={opts}"
+        _emit(line)
+
+    # The reverse direction matters just as much: given a field, can we name its
+    # tab? The webhook receives a field_datum event carrying only a field id, and
+    # has to decide which workflow's gate to re-evaluate.
+    _emit("\nReverse lookup — does a FieldDefinition name its tab?")
+    one = _get("field_definitions", auth, {"per_page": 1}).get("data", [])
+    if one:
+        rels = one[0].get("relationships", {})
+        _emit(f"  FieldDefinition {one[0]['id']} relationships: {list(rels.keys())}")
+        _emit(f"  attributes: {list(one[0]['attributes'].keys())}")
+        if "tab" in rels:
+            _emit(f"  tab → {json.dumps(rels['tab'].get('data'))}")
+            _emit("\n  VERDICT: tab-driven config works in both directions.")
+        elif "tab_id" in one[0]["attributes"]:
+            _emit(f"  tab_id attribute = {one[0]['attributes']['tab_id']}")
+            _emit("\n  VERDICT: tab-driven config works via the tab_id attribute.")
+        else:
+            _emit("\n  VERDICT: no direct tab link on FieldDefinition. Forward lookup "
+                  "still works, so cache tab→fields at startup and invert the map.")
+
+
+# ── Probe 2: workflow card activity types ────────────────────────────────────
+
+def probe_activities(auth: tuple, workflow: str, card: str) -> None:
+    """Print every activity on a card so completed vs skipped can be told apart.
+
+    Complete one step and skip another in the PCO UI before running this,
+    otherwise there is nothing to compare.
+    """
+    _emit("=" * 78)
+    _emit("PROBE 2 — WorkflowCardActivity.attributes.type")
+    _emit("=" * 78)
+    _emit("\nExpects: one step COMPLETED and one step SKIPPED in the PCO UI first.\n")
+
+    steps = _get(f"workflows/{workflow}/steps", auth, {"per_page": 100}).get("data", [])
+    seq_by_id = {s["id"]: s["attributes"].get("sequence") for s in steps}
+    name_by_id = {s["id"]: s["attributes"].get("name", "") for s in steps}
+    _emit(f"Workflow {workflow} steps:")
+    for s in sorted(steps, key=lambda x: x["attributes"].get("sequence", 0)):
+        _emit(f"  seq {s['attributes'].get('sequence')}  id={s['id']:<10} {s['attributes'].get('name','')!r}")
+
+    body = _get(f"workflows/{workflow}/cards/{card}/activities", auth, {"per_page": 100})
+    acts = body.get("data", [])
+    _emit(f"\nGET .../cards/{card}/activities  →  {len(acts)} activities\n")
+    seen: set[str] = set()
+    for a in acts:
+        attrs = a["attributes"]
+        step = (a.get("relationships", {}).get("workflow_step", {}).get("data") or {}).get("id", "")
+        atype = attrs.get("type", "")
+        seen.add(str(atype))
+        _emit(f"  type={atype!r:<24} step={name_by_id.get(step, step)!r} "
+              f"(seq {seq_by_id.get(step)})")
+        if attrs.get("comment"):
+            _emit(f"      comment: {attrs['comment']!r}")
+        _emit(f"      all attributes: {json.dumps(attrs, default=str)[:300]}")
+
+    _emit(f"\n  DISTINCT type VALUES: {sorted(seen)}")
+    _emit("  → If completed and skipped differ here, a hard backstop is possible.")
+
+
+# ── Probe 3: go_back on a completed card ─────────────────────────────────────
+
+def probe_go_back(auth: tuple, workflow: str, card: str) -> None:
+    """Attempt go_back on a completed card. MUTATES the card."""
+    _emit("=" * 78)
+    _emit("PROBE 3 — go_back on a COMPLETED card   (MUTATES)")
+    _emit("=" * 78)
+
+    before = _get(f"workflows/{workflow}/cards/{card}", auth).get("data", {})
+    b_attrs = before.get("attributes", {})
+    b_step = (before.get("relationships", {}).get("current_step", {}).get("data") or {})
+    _emit(f"\nBefore:  stage={b_attrs.get('stage')!r}  "
+          f"completed_at={b_attrs.get('completed_at')}  "
+          f"current_step={b_step.get('id')}")
+
+    if b_attrs.get("stage") != "completed":
+        _emit("\n  Card is NOT completed — this probe only answers the question for a "
+              "completed card. Complete it in the PCO UI first, then re-run.")
+        return
+
+    _emit("\nPOST .../go_back")
+    _post(f"workflows/{workflow}/cards/{card}/go_back", auth)
+
+    after = _get(f"workflows/{workflow}/cards/{card}", auth).get("data", {})
+    a_attrs = after.get("attributes", {})
+    a_step = (after.get("relationships", {}).get("current_step", {}).get("data") or {})
+    _emit(f"\nAfter:   stage={a_attrs.get('stage')!r}  "
+          f"completed_at={a_attrs.get('completed_at')}  "
+          f"current_step={a_step.get('id')}")
+    _emit("\n  → If stage returned to 'ready' with a current_step, a gate MAY be the "
+          "last step. If not, add a trivial 'Confirm & finish' step after the gate.")
+
+
+# ── Probe 4: native send_email ───────────────────────────────────────────────
+
+def probe_send_email(auth: tuple, workflow: str, card: str) -> None:
+    """Discover what the card's native send_email action requires. SENDS EMAIL."""
+    _emit("=" * 78)
+    _emit("PROBE 4 — native card send_email   (MAY SEND REAL EMAIL)")
+    _emit("=" * 78)
+
+    card_body = _get(f"workflows/{workflow}/cards/{card}", auth).get("data", {})
+    person = (card_body.get("relationships", {}).get("person", {}).get("data") or {})
+    _emit(f"\nCard {card} is for person {person.get('id')} — make sure that is YOU.")
+
+    _emit("\nStep A: POST with an empty body, to read the validation error.")
+    resp = _post(f"workflows/{workflow}/cards/{card}/send_email", auth, {})
+    if resp.ok:
+        _emit("\n  Empty body ACCEPTED — an email may have been sent. "
+              "Check the recipient's inbox and the card's activity log.")
+        return
+
+    _emit("\nStep B: POST with subject/body, using the params named above if they differ.")
+    _post(f"workflows/{workflow}/cards/{card}/send_email", auth,
+          {"data": {"attributes": {"subject": "PCO probe — please ignore",
+                                   "body": "Probe of the native send_email action."}}})
+    _emit("\n  → Check who actually received it: the person on the card, or the "
+          "assignee. If it is assignee-only or untemplated, use Brevo.")
+
+
+# ── Probe 5: validate configured anytime rules ───────────────────────────────
+
+def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
+    """Check every anytime_item_workflows rule against live PCP. Read-only.
+
+    Returns (problem_count, report_lines) so callers other than the CLI — notably
+    the config editor's save — can act on the result instead of parsing stdout.
+
+    A gate step id belonging to a different workflow, or a satisfying value that
+    does not match any real dropdown option, both fail silently at runtime: cards
+    simply never advance. This turns those into errors you can see.
+    """
+    _lines.clear()
+    auth = auth or _auth()
+    _emit("=" * 78)
+    _emit("Validate configured anytime rules")
+    _emit("=" * 78)
+
+    rules_path = Path(__file__).parent / "rules.json"
+    rules = json.loads(rules_path.read_text()).get("anytime_item_workflows", [])
+    if not rules:
+        _emit("\nNo anytime_item_workflows configured.")
+        return 0, list(_lines)
+
+    def as_list(v):
+        if not v:
+            return []
+        return [x.strip() for x in v.split(",")] if isinstance(v, str) else [str(x) for x in v]
+
+    problems = 0
+    for rule in rules:
+        _emit(f"\n--- {rule.get('description', '(no description)')} ---")
+        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+
+        wf_body = _get(f"workflows/{wf}", auth).get("data", {})
+        _emit(f"  workflow {wf}: {wf_body.get('attributes', {}).get('name', 'NOT FOUND')!r}")
+        if not wf_body:
+            problems += 1
+
+        steps = _get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", [])
+        gate = str(rule.get("gate_step_id", ""))
+        match = next((s for s in steps if s["id"] == gate), None)
+        if match:
+            seq = match["attributes"].get("sequence")
+            last = max((s["attributes"].get("sequence", 0) for s in steps), default=0)
+            _emit(f"  gate step {gate}: {match['attributes'].get('name')!r} at sequence {seq} of {last}")
+            if seq == last:
+                _emit("    WARNING: the gate is the LAST step. A staff member skipping it "
+                      "completes the card outright, and recovery depends on go_back, which "
+                      "is unverified. Add a trailing 'Confirm & finish' step.")
+            if seq == 0:
+                _emit("    WARNING: the gate is the FIRST step, so every card parks there "
+                      "immediately and the sequential steps never run.")
+        else:
+            _emit(f"  gate step {gate}: NOT FOUND in this workflow  <-- cards will never be released")
+            _emit(f"    steps that do exist: "
+                  f"{[(s['id'], s['attributes'].get('name')) for s in steps]}")
+            problems += 1
+
+        body = _get(f"tabs/{tab}/field_definitions", auth,
+                    {"include": "field_options", "per_page": 100})
+        by_id = {i["id"]: i["attributes"]["value"]
+                 for i in body.get("included", []) if i.get("type") == "FieldOption"}
+        selects, ignored, all_options = [], [], set()
+        for f in body.get("data", []):
+            if f["attributes"].get("deleted_at"):
+                continue
+            name, dtype = f["attributes"].get("name", ""), f["attributes"].get("data_type")
+            if dtype == "select":
+                opts = [by_id[r["id"]] for r in
+                        (f.get("relationships", {}).get("field_options", {}).get("data") or [])
+                        if r["id"] in by_id]
+                selects.append((f["id"], name, opts))
+                all_options.update(opts)
+            else:
+                ignored.append((name, dtype))
+
+        _emit(f"  tab {tab}: {len(selects)} gating item(s), {len(ignored)} ignored")
+        for fid, name, opts in selects:
+            _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
+        for name, dtype in ignored:
+            _emit(f"    data  {'':<10} {name:<34} ({dtype}) — never gates")
+        if not selects:
+            _emit("    ERROR: no `select` fields on this tab, so nothing gates and the "
+                  "card is released immediately.")
+            problems += 1
+
+        satisfying = as_list(rule.get("satisfying_values"))
+        unmatched = [v for v in satisfying if v not in all_options]
+        _emit(f"  satisfying values: {satisfying}")
+        if unmatched:
+            _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
+                  f"intentional (e.g. spelling variants), but a typo here means the "
+                  f"item can never be satisfied.")
+        never = [(fid, n) for fid, n, o in selects if not set(o) & set(satisfying)]
+        for fid, n in never:
+            _emit(f"    ERROR: item {n!r} ({fid}) has NO option that satisfies it — "
+                  f"every card will park here forever.")
+            problems += 1
+
+        for label, key in [("durable", "requires_person_fields"), ("notes", "notes_field_id")]:
+            for fid in as_list(rule.get(key)):
+                fd = _get(f"field_definitions/{fid}", auth).get("data", {})
+                attrs = fd.get("attributes", {})
+                dtype = attrs.get("data_type", "?")
+                _emit(f"  {label} field {fid}: {attrs.get('name', 'NOT FOUND')!r} "
+                      f"({dtype}) tab={attrs.get('tab_id')}")
+                if not fd:
+                    problems += 1
+                    continue
+                if key != "requires_person_fields":
+                    continue
+                # A durable field becomes a gating item, so it has to be a
+                # dropdown whose options include a satisfying value. A text field
+                # here holds prose that can never equal "Done", which parks every
+                # card on it permanently.
+                if dtype != "select":
+                    _emit(f"    ERROR: a durable field must be a `select` dropdown. "
+                          f"{attrs.get('name')!r} is `{dtype}`, so its value can never "
+                          f"match {satisfying} and every card will park on it forever. "
+                          f"Remove it from Durable field IDs.")
+                    problems += 1
+                else:
+                    opts = [by_id[r["id"]] for r in
+                            (fd.get("relationships", {}).get("field_options", {}).get("data") or [])
+                            if r["id"] in by_id]
+                    if opts and not set(opts) & set(satisfying):
+                        _emit(f"    ERROR: options {opts} include no satisfying value.")
+                        problems += 1
+                if str(attrs.get("tab_id")) == tab:
+                    _emit("    WARNING: this durable field lives on the ITEMS tab, so it "
+                          "will be cleared on re-enrolment — the opposite of durable. "
+                          "Move it to another tab.")
+
+    _emit(f"\n{'=' * 78}")
+    _emit(f"{problems} blocking problem(s) found." if problems
+          else "All rules validate. Safe to test against a real card.")
+    return problems, list(_lines)
+
+
+def problems_only(lines: list[str]) -> list[str]:
+    """Just the ERROR/WARNING/NOTE lines, with the rule heading they sit under.
+
+    The full report is long and mostly reassurance. When something is wrong the
+    only useful part is what is wrong and which rule it belongs to.
+    """
+    out, heading = [], ""
+    for line in lines:
+        if line.startswith("--- "):
+            heading = line
+        elif line.strip().startswith(("ERROR", "WARNING", "NOTE")):
+            if heading and heading not in out:
+                out.append(heading)
+            out.append(line.strip())
+    return out
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("probe", nargs="?", default="validate",
+                        choices=["validate", "tabs", "activities", "go-back", "send-email"],
+                        help="defaults to 'validate'")
+    parser.add_argument("--workflow", help="workflow id (not needed for 'tabs')")
+    parser.add_argument("--card", help="DISPOSABLE test card id (not needed for 'tabs')")
+    parser.add_argument("--tab", help="for 'tabs': inspect this tab instead of the first")
+    parser.add_argument("--i-mean-it", action="store_true",
+                        help="required for go-back and send-email, which mutate or send")
+    args = parser.parse_args()
+
+    if not _project_id:
+        print("ERROR: CLOUD_PROJECT_ID not set in .env", file=sys.stderr)
+        return 1
+
+    needs_card = args.probe in ("activities", "go-back", "send-email")
+    if needs_card and not (args.workflow and args.card):
+        print(f"ERROR: --workflow and --card are required for '{args.probe}'", file=sys.stderr)
+        return 1
+
+    if args.probe in ("go-back", "send-email") and not args.i_mean_it:
+        print(f"ERROR: '{args.probe}' modifies the card or sends real email.\n"
+              f"       Re-run with --i-mean-it once you are using a disposable card.",
+              file=sys.stderr)
+        return 1
+
+    auth = _auth()
+    if args.probe == "tabs":
+        probe_tabs(auth, args.tab)
+    elif args.probe == "validate":
+        validate_rules(auth)
+    elif args.probe == "activities":
+        probe_activities(auth, args.workflow, args.card)
+    elif args.probe == "go-back":
+        probe_go_back(auth, args.workflow, args.card)
+    else:
+        probe_send_email(auth, args.workflow, args.card)
+
+    with open(OUTFILE, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(_lines) + "\n\n")
+    _emit(f"\nAppended to {OUTFILE}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

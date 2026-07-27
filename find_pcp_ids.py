@@ -100,7 +100,13 @@ def fetch_pcp_ids() -> dict:
     return {
         "pcp_workflow": [{"id": w["id"], "name": w["attributes"].get("name", "")} for w in workflows],
         "pcp_form":     [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in forms],
-        "pcp_field":    [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in fields],
+        # data_type and tab_id let the editor offer only fields that can legally
+        # fill a given slot — e.g. a durable prerequisite must be a dropdown, and
+        # must not live on the workflow's own items tab.
+        "pcp_field":    [{"id": f["id"], "name": f["attributes"].get("name", ""),
+                          "data_type": f["attributes"].get("data_type", ""),
+                          "tab_id": str(f["attributes"].get("tab_id", "") or "")}
+                         for f in fields if not f["attributes"].get("deleted_at")],
         "pcp_tab":      [{"id": t["id"], "name": t["attributes"].get("name", "")} for t in tabs],
     }
 
