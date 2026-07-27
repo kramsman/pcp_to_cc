@@ -172,7 +172,7 @@ cython_debug/
 /gitupdater.json
 /cc_list_ids.txt
 /find_cc_ids.txt
-/find_pcp_ids.txt
+/find_pcp_ids.html
 /wf_anytimeitems_rpt_*.html
 /wf_anytimeitems_validate.html
 /.google_creds/token.json

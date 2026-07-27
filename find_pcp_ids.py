@@ -2,12 +2,13 @@
 Helper script: list every ID used in rules.json, from both Planning Center People
 and Constant Contact, in one report.
 
-Output order: Workflows → Forms → Field Tabs → Custom Fields (by tab)
+Output order: Workflows → Forms → Field Tabs → Custom Fields
               → Constant Contact Lists
-Custom fields are grouped by the tab they appear on, and `select` fields are
-marked, since only those can gate an anytime-items workflow.
+Custom fields carry their tab as a column, and dropdown (select) fields are
+marked, since only those can be required as an anytime item.
 
-Results are printed to the terminal and saved to find_pcp_ids.txt.
+Results are printed to the terminal and saved to find_pcp_ids.html, which has a
+filter box for narrowing every table at once.
 
 Prerequisites:
     1. .env has CLOUD_PROJECT_ID set.
@@ -18,10 +19,13 @@ Usage:
     python find_pcp_ids.py
 """
 
+import html
 import os
 import sys
 
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")  # suppress gRPC noise before grpc loads
+
+from datetime import datetime  # noqa: E402
 
 import requests  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
@@ -116,122 +120,195 @@ def fetch_pcp_ids() -> dict:
     }
 
 
+def collect_sections(auth: tuple, lines: list[str]) -> list[dict]:
+    """Gather every ID list as {title, columns, rows, note}.
+
+    One structure feeds both the terminal output and the HTML page, so the two
+    can never drift apart.
+    """
+    sections = []
+
+    workflows = _fetch_all("workflows", auth, lines)
+    sections.append({
+        "title": "Workflows", "columns": ["ID", "Name", "Campus"],
+        "rows": [[w["id"], w["attributes"].get("name", ""),
+                  w["attributes"].get("campus_name", "") or ""] for w in workflows],
+    })
+
+    forms = _fetch_all("forms", auth, lines)
+    sections.append({
+        "title": "Forms", "columns": ["ID", "Name", "Active"],
+        "rows": [[f["id"], f["attributes"].get("name", ""),
+                  "yes" if f["attributes"].get("active") else "no"] for f in forms],
+    })
+
+    # Tabs group custom fields on a person's profile, and are how anytime-item
+    # workflows find their items: the config names a tab, and the dropdown fields
+    # on it are the items. Nothing in PCP links a tab to a workflow — that link
+    # lives only in rules.json.
+    tabs = _fetch_all("tabs", auth, lines)
+    tab_names = {t["id"]: t["attributes"].get("name", "") for t in tabs}
+    sections.append({
+        "title": "Field Tabs", "columns": ["ID", "Name", "Order"],
+        "rows": [[t["id"], t["attributes"].get("name", ""),
+                  str(t["attributes"].get("sequence", ""))]
+                 for t in sorted(tabs, key=lambda x: x["attributes"].get("sequence", 0))],
+        "note": "A tab is named in a rule to say which fields are that workflow's "
+                "anytime items.",
+    })
+
+    # Carries its tab as a column rather than splitting into a table per tab, so
+    # filtering on a tab name gathers its fields in one go.
+    fields = [f for f in _fetch_all("field_definitions", auth, lines)
+              if not f["attributes"].get("deleted_at")]
+    field_rows = []
+    for f in sorted(fields, key=lambda x: (tab_names.get(str(x["attributes"].get("tab_id", "") or ""), "zz"),
+                                           x["attributes"].get("name", ""))):
+        attrs = f["attributes"]
+        tab_id = str(attrs.get("tab_id", "") or "")
+        field_rows.append([
+            f["id"], attrs.get("name", ""), attrs.get("data_type", ""),
+            tab_names.get(tab_id, "(no tab)"),
+            "yes" if attrs.get("data_type") == "select" else "",
+        ])
+    sections.append({
+        "title": "Custom Fields", "columns": ["ID", "Name", "Type", "Tab", "Can be required"],
+        "rows": field_rows,
+        "note": "Only dropdown (select) fields can be required as an anytime item.",
+    })
+
+    # Folded in here so one report answers "what is the ID of X", whichever
+    # system X lives in. A CC auth failure must not cost you the PCP report,
+    # so it degrades to a note rather than an exit.
+    try:
+        from find_cc_ids import fetch_cc_lists_full
+        cc = fetch_cc_lists_full()
+        sections.append({
+            "title": "Constant Contact Lists", "columns": ["UUID", "Name", "Members"],
+            "rows": [[l.get("list_id", ""), l.get("name", ""),
+                      str(l.get("membership_count", ""))] for l in cc],
+        })
+    except BaseException as e:
+        sections.append({
+            "title": "Constant Contact Lists", "columns": ["UUID", "Name", "Members"],
+            "rows": [],
+            "note": f"Could not fetch: {e}. Planning Center results above are "
+                    f"unaffected — check CC_ACCESS_TOKEN in Secret Manager.",
+        })
+    return sections
+
+
+def print_sections(sections: list[dict], lines: list[str]) -> None:
+    """Echo the same data to the terminal as aligned columns."""
+    for s in sections:
+        _emit(lines, f"\n\n=== {s['title']} ===\n")
+        if s.get("note"):
+            _emit(lines, f"{s['note']}\n")
+        if not s["rows"]:
+            _emit(lines, "None found.")
+            continue
+        widths = [max(len(str(r[i])) for r in s["rows"] + [s["columns"]])
+                  for i in range(len(s["columns"]))]
+        _emit(lines, "  ".join(c.ljust(w) for c, w in zip(s["columns"], widths)))
+        _emit(lines, "-" * (sum(widths) + 2 * len(widths)))
+        for r in s["rows"]:
+            _emit(lines, "  ".join(str(v).ljust(w) for v, w in zip(r, widths)))
+        _emit(lines, f"\nTotal: {len(s['rows'])}")
+
+
+def render_html(sections: list[dict]) -> str:
+    """One page, one filter box across every table."""
+    esc = html.escape
+    blocks = []
+    for n, s in enumerate(sections):
+        head = "".join(f"<th>{esc(c)}</th>" for c in s["columns"])
+        rows = "".join(
+            "<tr>" + "".join(
+                f'<td class="{"id" if i == 0 else "yes" if v == "yes" and c == "Can be required" else ""}">'
+                f"{esc(str(v))}</td>"
+                for i, (v, c) in enumerate(zip(r, s["columns"]))
+            ) + "</tr>"
+            for r in s["rows"]
+        )
+        note = f'<p class="note">{esc(s["note"])}</p>' if s.get("note") else ""
+        empty = "" if s["rows"] else '<p class="note">None found.</p>'
+        blocks.append(
+            f'<section data-sec="{n}"><h2>{esc(s["title"])} '
+            f'<span class="count" data-total="{len(s["rows"])}">{len(s["rows"])}</span></h2>'
+            f'{note}{empty}'
+            f'<div class="wrap"><table><thead><tr>{head}</tr></thead>'
+            f"<tbody>{rows}</tbody></table></div></section>"
+        )
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planning Center and Constant Contact IDs</title>
+<style>
+ :root {{ color-scheme: light dark; }}
+ body {{ font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; padding:1.5rem; }}
+ h1 {{ font-size:1.2rem; margin:0 0 .25rem; }}
+ h2 {{ font-size:1rem; margin:1.75rem 0 .4rem; }}
+ .sub {{ opacity:.7; font-size:.85rem; margin-bottom:1rem; }}
+ .note {{ opacity:.7; font-size:.85rem; margin:.2rem 0 .5rem; }}
+ .count {{ font-weight:400; opacity:.6; font-size:.85rem; }}
+ #q {{ width:100%; max-width:32rem; padding:.5rem .7rem; font-size:1rem;
+       border:1px solid rgba(128,128,128,.5); border-radius:.4rem;
+       background:transparent; color:inherit; position:sticky; top:0; }}
+ .wrap {{ overflow-x:auto; }}
+ table {{ border-collapse:collapse; min-width:100%; }}
+ th,td {{ padding:.35rem .6rem; text-align:left; white-space:nowrap;
+          border-bottom:1px solid rgba(128,128,128,.25); }}
+ th {{ font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }}
+ td.id {{ font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }}
+ td.yes {{ color:#1b6b3a; font-weight:600; }}
+ section.hide, tr.hide {{ display:none; }}
+ @media (prefers-color-scheme: dark) {{ td.yes {{ color:#7ddc9a; }} }}
+</style></head><body>
+<h1>Planning Center and Constant Contact IDs</h1>
+<div class="sub">Run {datetime.now().strftime('%d %b %Y, %-I:%M %p')} ·
+ type below to narrow every table at once</div>
+<input id="q" type="search" placeholder="Filter by name, ID, type or tab…" autofocus>
+{"".join(blocks)}
+<script>
+const q = document.getElementById('q');
+q.addEventListener('input', () => {{
+  const t = q.value.trim().toLowerCase();
+  document.querySelectorAll('section').forEach(sec => {{
+    let shown = 0;
+    sec.querySelectorAll('tbody tr').forEach(tr => {{
+      const hit = !t || tr.textContent.toLowerCase().includes(t);
+      tr.classList.toggle('hide', !hit);
+      if (hit) shown++;
+    }});
+    const c = sec.querySelector('.count');
+    c.textContent = t ? shown + ' of ' + c.dataset.total : c.dataset.total;
+    sec.classList.toggle('hide', t && shown === 0);
+  }});
+}});
+</script>
+</body></html>"""
+
+
 def main():
     if not _project_id:
         print("ERROR: CLOUD_PROJECT_ID not set in .env")
         sys.exit(1)
 
-    app_id = _get_secret("PCP_APP_ID")
-    secret = _get_secret("PCP_SECRET")
-    auth   = (app_id, secret)
+    auth = (_get_secret("PCP_APP_ID"), _get_secret("PCP_SECRET"))
     lines: list[str] = []
 
-    # --- Workflows ---
-    _emit(lines, "\n=== Workflows ===\n")
-    workflows = _fetch_all("workflows", auth, lines)
-    if not workflows:
-        _emit(lines, "No workflows found.")
-    else:
-        _emit(lines, f"{'ID':<12}  {'Name':<50}  Campus")
-        _emit(lines, "-" * 80)
-        for w in workflows:
-            attrs = w.get("attributes", {})
-            campus = attrs.get("campus_name", "") or ""
-            _emit(lines, f"{w['id']:<12}  {attrs.get('name',''):<50}  {campus}")
-        _emit(lines, f"\nTotal: {len(workflows)} workflows")
+    sections = collect_sections(auth, lines)
+    print_sections(sections, lines)
 
-    # --- Forms ---
-    _emit(lines, "\n\n=== Forms ===\n")
-    forms = _fetch_all("forms", auth, lines)
-    if not forms:
-        _emit(lines, "No forms found.")
-    else:
-        _emit(lines, f"{'ID':<12}  {'Name':<50}  Active")
-        _emit(lines, "-" * 70)
-        for f in forms:
-            attrs = f.get("attributes", {})
-            active = "yes" if attrs.get("active") else "no"
-            _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<50}  {active}")
-        _emit(lines, f"\nTotal: {len(forms)} forms")
-
-    # --- Tabs ---
-    # Tabs group custom fields on a person's profile, and are how anytime-item
-    # workflows find their items: the config names a tab, and the dropdown fields
-    # on it are the items. Nothing in PCP links a tab to a workflow — that link
-    # lives only in rules.json.
-    _emit(lines, "\n\n=== Field Tabs ===\n")
-    tabs = _fetch_all("tabs", auth, lines)
-    tab_names = {t["id"]: t.get("attributes", {}).get("name", "") for t in tabs}
-    if not tabs:
-        _emit(lines, "No tabs found.")
-    else:
-        _emit(lines, f"{'ID':<12}  {'Name':<50}  Sequence")
-        _emit(lines, "-" * 76)
-        for t in sorted(tabs, key=lambda x: x.get("attributes", {}).get("sequence", 0)):
-            attrs = t.get("attributes", {})
-            _emit(lines, f"{t['id']:<12}  {attrs.get('name',''):<50}  {attrs.get('sequence','')}")
-        _emit(lines, f"\nTotal: {len(tabs)} tabs")
-
-    # --- Custom Fields ---
-    # Grouped by tab, since that is how they appear on a profile and how the
-    # anytime-item gate discovers them. Only `select` fields can gate a workflow.
-    _emit(lines, "\n\n=== Custom Fields (by tab) ===\n")
-    fields = _fetch_all("field_definitions", auth, lines)
-    if not fields:
-        _emit(lines, "No field definitions found.")
-    else:
-        by_tab: dict[str, list[dict]] = {}
-        for f in fields:
-            if f.get("attributes", {}).get("deleted_at"):
-                continue
-            tab_id = str(f.get("attributes", {}).get("tab_id", "") or "")
-            by_tab.setdefault(tab_id, []).append(f)
-        shown = 0
-        for tab_id, tab_fields in sorted(by_tab.items(),
-                                         key=lambda kv: tab_names.get(kv[0], "zz")):
-            label = tab_names.get(tab_id, "(no tab)")
-            _emit(lines, f"\n-- tab {tab_id or '?'}: {label} --")
-            _emit(lines, f"{'ID':<12}  {'Name':<40}  Data Type")
-            _emit(lines, "-" * 70)
-            for f in tab_fields:
-                attrs = f.get("attributes", {})
-                dtype = attrs.get("data_type", "")
-                gate = "  <- can be required" if dtype == "select" else ""
-                _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<40}  {dtype}{gate}")
-                shown += 1
-        _emit(lines, f"\nTotal: {shown} field definitions")
-
-    # --- Constant Contact Lists ---
-    # Folded in here so one report answers "what is the ID of X", whichever
-    # system X lives in. A CC auth failure must not cost you the PCP report,
-    # so it degrades to a note rather than an exit.
-    _emit(lines, "\n\n=== Constant Contact Lists ===\n")
-    try:
-        from find_cc_ids import fetch_cc_lists_full
-        cc_lists = fetch_cc_lists_full()
-    except BaseException as e:
-        cc_lists = None
-        _emit(lines, f"Could not fetch Constant Contact lists: {e}")
-        _emit(lines, "(PCP results above are unaffected. Check CC_ACCESS_TOKEN "
-                     "in Secret Manager, or run find_cc_ids.py for detail.)")
-    if cc_lists is not None:
-        if not cc_lists:
-            _emit(lines, "No contact lists found.")
-        else:
-            _emit(lines, f"{'UUID':<40}  {'Name':<44}  Members")
-            _emit(lines, "-" * 95)
-            for lst in cc_lists:
-                _emit(lines, f"{lst.get('list_id',''):<40}  {lst.get('name',''):<44}  "
-                             f"{lst.get('membership_count','')}")
-            _emit(lines, f"\nTotal: {len(cc_lists)} contact lists")
-
-    out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
+    out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".html"
     with open(out_path, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(lines))
+        fh.write(render_html(sections))
     print(f"\nSaved to: {out_path}")
 
     confirm_with_file_link(
-        "Workflows, forms, tabs, field definitions, and CC lists written.",
+        "Workflows, forms, tabs, field definitions, and CC lists written.\n"
+        "The page has a filter box — type to narrow every table at once.",
         out_path,
         title="Rpt 'PCO and CC Field Ids'",
         buttons=["OK"],
