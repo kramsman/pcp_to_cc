@@ -127,55 +127,66 @@ TOOLS = {
 }
 
 
+def _run_detached(info: dict) -> None:
+    """Launch a tool that opens its own window, relaying its log until it does."""
+    log_path = info["script"].parent / f"{info['script'].stem}.log"
+    log_file = open(log_path, "w", buffering=1)
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(info["script"])],
+        stdout=log_file,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=str(info["script"].parent),
+    )
+    print(f"Launched {info['script'].name} — log at {log_path}\n")
+    # Relay child's log to this console until it signals the window is about to
+    # open, then let main() exit so the launcher's QApplication is gone before
+    # the child creates its own.
+    sentinel = "Done. Opening editor window."
+    with open(log_path, "r") as log_read:
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            line = log_read.readline()
+            if line:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                if sentinel in line:
+                    break
+            else:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+
+
 def main() -> None:
     _ensure_adc_auth()
-    msg_lines = []
-    for name, info in TOOLS.items():
-        msg_lines.append(f"{name}\n{info['description']}\n")
-    msg = "\n".join(msg_lines)
-
+    msg = "\n".join(f"{name}\n{info['description']}\n" for name, info in TOOLS.items())
     buttons = list(TOOLS.keys()) + ["Cancel"]
-    choice = confirm(msg, title="Pick a Utility", buttons=buttons)
 
-    # Empty (or None) when the dialog is closed with the window button rather
-    # than a choice — test that before calling .lower() on it.
-    if not choice or choice.lower() == "cancel":
-        return
+    # Reopen the menu after each tool finishes, so several can be run in one
+    # sitting. confirm() reuses QApplication.instance(), so showing the dialog
+    # repeatedly in this process is fine.
+    while True:
+        choice = confirm(msg, title="Pick a Utility", buttons=buttons)
 
-    for name, info in TOOLS.items():
-        if choice.lower() == name.lower():
-            if info.get("detach"):
-                log_path = info["script"].parent / f"{info['script'].stem}.log"
-                log_file = open(log_path, "w", buffering=1)
-                proc = subprocess.Popen(
-                    [sys.executable, "-u", str(info["script"])],
-                    stdout=log_file,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                    cwd=str(info["script"].parent),
-                )
-                print(f"Launched {info['script'].name} — log at {log_path}\n")
-                # Relay child's log to this console until it signals the
-                # window is about to open, then exit so the launcher's
-                # QApplication is gone before the child creates its own.
-                sentinel = "Done. Opening editor window."
-                with open(log_path, "r") as log_read:
-                    deadline = time.time() + 180
-                    while time.time() < deadline:
-                        line = log_read.readline()
-                        if line:
-                            sys.stdout.write(line)
-                            sys.stdout.flush()
-                            if sentinel in line:
-                                break
-                        else:
-                            if proc.poll() is not None:
-                                break
-                            time.sleep(0.1)
-            else:
-                subprocess.run([sys.executable, str(info["script"])], check=False)
+        # Empty (or None) when the dialog is closed with the window button
+        # rather than a choice — test that before calling .lower() on it.
+        if not choice or choice.lower() == "cancel":
             return
+
+        info = next((i for n, i in TOOLS.items() if choice.lower() == n.lower()), None)
+        if info is None:
+            continue
+
+        if info.get("detach"):
+            # The one tool that cannot loop: it opens its own Qt window, and
+            # this process must exit first so there is only one QApplication.
+            _run_detached(info)
+            return
+
+        subprocess.run([sys.executable, str(info["script"])], check=False)
+        print()  # separate this tool's output from the next menu
 
 
 if __name__ == "__main__":

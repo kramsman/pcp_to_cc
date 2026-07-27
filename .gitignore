@@ -174,7 +174,7 @@ cython_debug/
 /find_cc_ids.txt
 /find_pcp_ids.txt
 /wf_anytimeitems_rpt_*.html
-/wf_anytimeitems_validate.txt
+/wf_anytimeitems_validate.html
 /.google_creds/token.json
 /rules_report.html
 /tests/test_anytime_items.py

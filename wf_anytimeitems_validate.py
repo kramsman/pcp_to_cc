@@ -17,7 +17,8 @@ DISPOSABLE test card, and the last two change it:
     go-back     Does go_back work on an already-completed card?   MUTATES
     send-email  What does a card's native send_email do?          SENDS EMAIL
 
-Results are printed and appended to wf_anytimeitems_validate.txt.
+Results are printed, and written to wf_anytimeitems_validate.html — overwritten
+each run, since the question is whether the config is valid right now.
 
 Prerequisites:
     1. .env has CLOUD_PROJECT_ID set.
@@ -32,9 +33,11 @@ Usage:
 """
 
 import argparse
+import html
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")  # suppress gRPC noise before grpc loads
@@ -48,7 +51,7 @@ load_dotenv()
 
 PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 HEADERS = {"User-Agent": "pco_webhook (office2@4thu.org)"}
-OUTFILE = "wf_anytimeitems_validate.txt"
+OUTFILE = Path(__file__).parent / "wf_anytimeitems_validate.html"
 
 _project_id = os.environ.get("CLOUD_PROJECT_ID", "")
 _client = None
@@ -431,6 +434,67 @@ def problems_only(lines: list[str]) -> list[str]:
     return out
 
 
+def render_html(lines: list[str], problems: int) -> str:
+    """Render the report, blocking problems first so they can't be missed."""
+    esc = html.escape
+    findings = problems_only(lines)
+
+    if problems:
+        banner = (f'<div class="bad"><strong>{problems} blocking problem'
+                  f'{"s" if problems != 1 else ""}.</strong> Cards will stop '
+                  f'advancing with nothing in the logs to explain why.</div>')
+    elif findings:
+        banner = '<div class="warn"><strong>No blocking problems.</strong> Notes below.</div>'
+    else:
+        banner = '<div class="ok"><strong>All rules validate.</strong></div>'
+
+    top = ""
+    if findings:
+        top = "<ul>" + "".join(
+            f'<li class="{"e" if f.startswith("ERROR") else "w" if f.startswith("WARNING") else "n"}">'
+            f"{esc(f)}</li>" for f in findings if not f.startswith("---")
+        ) + "</ul>"
+
+    body = []
+    for line in lines:
+        s = line.strip()
+        cls = ("e" if s.startswith("ERROR") else "w" if s.startswith("WARNING")
+               else "n" if s.startswith("NOTE") else "")
+        body.append(f'<span class="{cls}">{esc(line)}</span>' if cls else esc(line))
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Anytime rules — validation</title>
+<style>
+ :root {{ color-scheme: light dark; }}
+ body {{ font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; margin:0; padding:1.5rem; }}
+ h1 {{ font-size:1.2rem; margin:0 0 .25rem; }}
+ .sub {{ opacity:.7; font-size:.85rem; margin-bottom:1rem; }}
+ div.ok, div.warn, div.bad {{ padding:.6rem .8rem; border-radius:.4rem; margin-bottom:1rem;
+        border-left:4px solid currentColor; }}
+ div.ok {{ color:#1b6b3a; }} div.warn {{ color:#8a6100; }} div.bad {{ color:#b3261e; }}
+ ul {{ margin:0 0 1.5rem; padding-left:1.2rem; }}
+ li {{ margin:.25rem 0; }}
+ li.e, .e {{ color:#b3261e; font-weight:600; }}
+ li.w, .w {{ color:#8a6100; }}
+ li.n, .n {{ opacity:.75; }}
+ pre {{ overflow-x:auto; background:rgba(128,128,128,.09); padding:1rem;
+        border-radius:.4rem; font-size:12.5px; line-height:1.45; }}
+ @media (prefers-color-scheme: dark) {{
+   div.ok, li.e, .e {{ }} .e, li.e {{ color:#ff8a80; }} div.bad {{ color:#ff8a80; }}
+   .w, li.w {{ color:#ffcc80; }} div.warn {{ color:#ffcc80; }} div.ok {{ color:#7ddc9a; }}
+ }}
+</style></head><body>
+<h1>Anytime rules — validation</h1>
+<div class="sub">rules.json checked against live Planning Center ·
+ {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+{banner}
+{top}
+<pre>{chr(10).join(body)}</pre>
+</body></html>"""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -460,10 +524,11 @@ def main() -> int:
         return 1
 
     auth = _auth()
+    problems = 0
     if args.probe == "tabs":
         probe_tabs(auth, args.tab)
     elif args.probe == "validate":
-        validate_rules(auth)
+        problems, _ = validate_rules(auth)
     elif args.probe == "activities":
         probe_activities(auth, args.workflow, args.card)
     elif args.probe == "go-back":
@@ -471,9 +536,21 @@ def main() -> int:
     else:
         probe_send_email(auth, args.workflow, args.card)
 
-    with open(OUTFILE, "a", encoding="utf-8") as fh:
-        fh.write("\n".join(_lines) + "\n\n")
-    _emit(f"\nAppended to {OUTFILE}")
+    # Overwritten, not appended: this answers "is my config valid right now",
+    # and an old run above the current one is just something to misread.
+    OUTFILE.write_text(render_html(_lines, problems), encoding="utf-8")
+    print(f"\nWritten to {OUTFILE}")
+
+    if not os.environ.get("CLOUD_RUN_JOB"):
+        from uvbekutils.pyautobek import confirm_with_file_link
+        headline = (f"{problems} blocking problem{'s' if problems != 1 else ''} found."
+                    if problems else "All rules validate.")
+        confirm_with_file_link(
+            headline + "\nClick the link below to open the full report.",
+            str(OUTFILE),
+            title="Chk 'WF Anytime-Items'",
+            buttons=["OK"],
+        )
     return 0
 
 
