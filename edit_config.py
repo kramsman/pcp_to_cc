@@ -33,6 +33,8 @@ DROPDOWN_FIELDS = {
     "pcp_field_id":          "pcp_field",
     "form_id":               "pcp_form",
     "cc_list_id":            "cc_list",
+    "field_tab_id":          "pcp_tab",
+    "notes_field_id":        "pcp_field",
 }
 
 TABS = [
@@ -118,6 +120,38 @@ TABS = [
         },
         "widths":        [375, 110, 110, 110, 160],
         "trigger_field": "trigger",
+    },
+    {
+        "title":         "Anytime WF Items",
+        "description":   "Lets a workflow require items that can be done at ANY time, which PCO cannot do on its "
+                         "own because its steps are strictly sequential. Example: a retreat runs forms → payment → "
+                         "arrange a ride, but 'buy a shirt' can happen whenever. Add a 'Outstanding items' step near "
+                         "the end of the workflow and name it below as the Gate Step; the card is held there until "
+                         "every item is done, then released automatically. "
+                         "The items themselves are the DROPDOWN fields on the tab you pick — add a new dropdown to "
+                         "that tab in PCO and it becomes a required item with no change here and no redeploy. "
+                         "Text and paragraph fields on the same tab are ignored, so notes and bios can live there "
+                         "safely. 'Satisfying values' are the dropdown choices that count as finished (default "
+                         "Done, Not needed, Waived) — anything else, such as 'Promised', leaves the item outstanding. "
+                         "Fields on the tab are cleared when someone re-enters the workflow so next year starts "
+                         "clean; put anything that should carry over year to year on a DIFFERENT tab and list its "
+                         "IDs under 'Durable field IDs'. "
+                         "See who still owes what at /readiness/<workflow id>.",
+        "key":           "anytime_item_workflows",
+        "cols":          ["description", "workflow_id", "field_tab_id", "gate_step_id",
+                          "satisfying_values", "requires_person_fields", "notes_field_id"],
+        "labels":        {
+            "description":            "Description",
+            "workflow_id":            "Workflow ID",
+            "field_tab_id":           "Items Tab (dropdowns on it are the items)",
+            "gate_step_id":           "Gate Step ID",
+            "satisfying_values":      "Satisfying values (comma separated)",
+            "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
+            "notes_field_id":         "Notes field for the report (optional)",
+        },
+        "widths":        [260, 150, 200, 120, 200, 200, 160],
+        "trigger_field": None,
+        "optional_cols": ["requires_person_fields", "notes_field_id"],
     },
     {
         "title":         "CC Lists from Fields",

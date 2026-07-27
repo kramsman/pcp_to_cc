@@ -117,6 +117,64 @@ PCP_WORKFLOW_RULES      = _rules.get("pcp_workflow_rules", [])
 
 WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 
+# ─── Anytime Item Workflows ───────────────────────────────────────────────────
+# PCP workflows are strictly sequential, but some items ("buy a shirt") can be
+# done at any point and must still be done before the workflow completes. Each
+# such workflow gets a gate step the webhook only promotes once every item is
+# satisfied. Edit via pcp_launcher.py → Edit Config, or directly in rules.json.
+#
+# workflow_id:            PCP workflow the gate belongs to — from find_pcp_ids.py
+# field_tab_id:           PCP tab whose dropdown fields ARE the items. Nothing in
+#                         PCP links a tab to a workflow; this line is that link.
+#                         Discover with: python probe_pco.py tabs
+# gate_step_id:           the "Outstanding items" step held until all items pass
+# satisfying_values:      dropdown values that count as done — everything else,
+#                         including blank, leaves the item outstanding
+# requires_person_fields: durable field IDs on some OTHER tab, never cleared
+#                         (e.g. "background check on file"). Optional.
+# notes_field_id:         a text/paragraph field on the tab shown as the report's
+#                         final column. Optional.
+#
+# Only `select` (dropdown) fields on the tab are items. text/paragraph/boolean
+# fields are data — shown on the report, never gating — so content fields such as
+# "Bio Text Edited" can live on the same tab without blocking anyone.
+
+def _as_list(value) -> list[str]:
+    """Accept either a JSON list or a comma-separated string.
+
+    The config editor stores these columns as free text, while a hand-edited
+    rules.json is naturally a list. Without this, set("Done, Waived") would
+    iterate characters and no item would ever be satisfied.
+    """
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [v.strip() for v in value.split(",") if v.strip()]
+    return [str(v).strip() for v in value if str(v).strip()]
+
+
+ANYTIME_ITEM_WORKFLOWS = [
+    {**w,
+     "satisfying_values": _as_list(w.get("satisfying_values")) or ["Done", "Not needed", "Waived"],
+     "requires_person_fields": _as_list(w.get("requires_person_fields"))}
+    for w in _rules.get("anytime_item_workflows", [])
+]
+
+
+def anytime_workflow(workflow_id: str) -> dict | None:
+    """Return the anytime-item config for a workflow, or None if it has no gate."""
+    return next((w for w in ANYTIME_ITEM_WORKFLOWS
+                 if w.get("workflow_id") == workflow_id), None)
+
+
+def anytime_workflows_for_tab(tab_id: str) -> list[dict]:
+    """Return every anytime-item config whose items live on the given tab.
+
+    Used by the field_datum handler: an event carries only a field id, and the
+    field names its tab, so this maps a field change back to the gates it affects.
+    """
+    return [w for w in ANYTIME_ITEM_WORKFLOWS if str(w.get("field_tab_id")) == str(tab_id)]
+
 # ─── CC List Rules ────────────────────────────────────────────────────────────
 # Controls which PCP profiles get added to which CC lists.
 # Edit via pcp_launcher.py → Edit Config, or directly in rules.json.

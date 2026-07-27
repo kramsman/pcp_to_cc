@@ -16,13 +16,16 @@ If you get an error "Gitupdater not found:
   3. then enter: uv pip install git+https://github.com/kramsman/gitupdater.git
 """
 
+import hmac
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from html import escape as html_escape
 from typing import Annotated, Any, Literal, Optional, Union
 
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from google.cloud import secretmanager
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -63,8 +66,9 @@ class Person(BaseModel):
     attributes: PersonAttrs
 
 class WorkflowCardRels(BaseModel):
-    person:   RelRef = RelRef()
-    workflow: RelRef = RelRef()
+    person:       RelRef = RelRef()
+    workflow:     RelRef = RelRef()
+    current_step: RelRef = RelRef()  # null once the card is completed
 
 class WorkflowCardAttrs(BaseModel):
     stage: Optional[str] = None
@@ -238,6 +242,16 @@ class LegacyWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, WorkflowCardActivity):
             return inner.relationships.workflow_card.data.id if inner.relationships.workflow_card.data else ""
+        if isinstance(inner, WorkflowCard):
+            return inner.id
+        return ""
+
+    @property
+    def current_step_id(self) -> str:
+        """Step the card now sits on. Empty once the card is completed or removed."""
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCard):
+            return inner.relationships.current_step.data.id if inner.relationships.current_step.data else ""
         return ""
 
 # Format: { "event": "...", "payload": { "data": [EventDelivery] } }  — workflow events
@@ -335,6 +349,16 @@ class PcpWebhookEvent(BaseModel):
         inner = self.delivery.attributes.payload.data
         if isinstance(inner, WorkflowCardActivity):
             return inner.relationships.workflow_card.data.id if inner.relationships.workflow_card.data else ""
+        if isinstance(inner, WorkflowCard):
+            return inner.id
+        return ""
+
+    @property
+    def current_step_id(self) -> str:
+        """Step the card now sits on. Empty once the card is completed or removed."""
+        inner = self.delivery.attributes.payload.data
+        if isinstance(inner, WorkflowCard):
+            return inner.relationships.current_step.data.id if inner.relationships.current_step.data else ""
         return ""
 
 
@@ -875,6 +899,42 @@ def set_custom_field(person_id: str, field_def_id: str, value: str) -> bool:
         return False
 
 
+def clear_custom_field(person_id: str, field_def_id: str) -> bool:
+    """Delete a person's FieldDatum so the field reads as blank.
+
+    Deletes rather than writing "" — a `select` field rejects a value that is not
+    one of its options, so PATCHing an empty string into a dropdown fails.
+    Returns True if the field is now blank, including when it already was.
+    """
+    if not field_def_id:
+        return False
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would clear field id={field_def_id} on person {person_id}")
+        return True
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    base = config.PCP_API_BASE
+    try:
+        r = requests.get(f"{base}/people/{person_id}/field_data", auth=auth, timeout=10)
+        r.raise_for_status()
+        existing = [
+            fd for fd in r.json().get("data", [])
+            if (fd.get("relationships", {}).get("field_definition", {}).get("data") or {}).get("id") == str(field_def_id)
+        ]
+        if not existing:
+            return True
+        for fd in existing:
+            d = requests.delete(f"{base}/field_data/{fd['id']}", auth=auth, timeout=10)
+            d.raise_for_status()
+            logger.info(f"clear_custom_field: deleted FieldDatum {fd['id']} "
+                        f"(field_def {field_def_id}) for person {person_id}")
+        return True
+    except requests.RequestException as e:
+        logger.error(f"clear_custom_field failed for person {person_id} field {field_def_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"PCP API error body: {e.response.text}")
+        return False
+
+
 def _active_cards_in_workflow(person_id: str, workflow_id: str, auth) -> list[dict]:
     """Return the person's active (non-removed, non-completed) cards in workflow_id.
 
@@ -966,6 +1026,517 @@ def complete_workflow_for_person(person_id: str, workflow_id: str, reason: str =
         return False
 
 
+# ─── Anytime items (gate steps) ───────────────────────────────────────────────
+# PCP workflows are strictly sequential — a card sits on exactly one step and
+# there is no optional or parallel step. An "anytime" item is modelled as a gate
+# step near the end that this code promotes the moment every item is satisfied.
+# Satisfy an item early and the card blows straight through the gate on arrival;
+# leave one outstanding and the card parks there, so the workflow cannot complete.
+
+_tab_fields_cache: dict[str, list[dict]] = {}
+_steps_cache: dict[str, dict[str, int]] = {}
+
+
+def _tab_field_definitions(tab_id: str, auth) -> list[dict]:
+    """Return the tab's field definitions as [{id, name, data_type, options}].
+
+    Cached per process — field definitions change when a human edits PCP, not
+    per request. Options are sideloaded, following the pattern already used in
+    pcp_and_realm_csv_transfer.py.
+    """
+    if tab_id in _tab_fields_cache:
+        return _tab_fields_cache[tab_id]
+    r = requests.get(
+        f"{config.PCP_API_BASE}/tabs/{tab_id}/field_definitions",
+        params={"include": "field_options", "per_page": 100},
+        auth=auth, timeout=10,
+    )
+    r.raise_for_status()
+    body = r.json()
+    option_values = {
+        item["id"]: item["attributes"]["value"]
+        for item in body.get("included", [])
+        if item.get("type") == "FieldOption"
+    }
+    fields = []
+    for f in body.get("data", []):
+        attrs = f["attributes"]
+        if attrs.get("deleted_at"):
+            continue
+        related = (f.get("relationships", {}).get("field_options", {}).get("data") or [])
+        fields.append({
+            "id":        f["id"],
+            "name":      attrs.get("name", ""),
+            "data_type": attrs.get("data_type", "text"),
+            "options":   [option_values[r_["id"]] for r_ in related if r_["id"] in option_values],
+        })
+    _tab_fields_cache[tab_id] = fields
+    return fields
+
+
+def _workflow_steps(workflow_id: str, auth) -> dict[str, int]:
+    """Return {step_id: sequence} for a workflow, cached per process."""
+    if workflow_id in _steps_cache:
+        return _steps_cache[workflow_id]
+    r = requests.get(
+        f"{config.PCP_API_BASE}/workflows/{workflow_id}/steps",
+        params={"per_page": 100}, auth=auth, timeout=10,
+    )
+    r.raise_for_status()
+    steps = {s["id"]: s["attributes"].get("sequence", 0) for s in r.json().get("data", [])}
+    _steps_cache[workflow_id] = steps
+    return steps
+
+
+def _gate_items(cfg: dict, auth) -> list[dict]:
+    """Return the fields that actually gate the workflow.
+
+    Only `select` (dropdown) fields on the tab are items. text/paragraph/boolean
+    fields on the same tab are data — a tab like "Membership Ceremony 5-17-26"
+    holds both status dropdowns and content fields such as "Bio Text Edited",
+    and gating on someone's bio prose would park every card forever.
+    Durable prerequisites named by requires_person_fields are appended.
+    """
+    items = [f for f in _tab_field_definitions(cfg["field_tab_id"], auth)
+             if f["data_type"] == "select"]
+    durable = set(str(x) for x in cfg.get("requires_person_fields", []))
+    if durable:
+        seen = {f["id"] for f in items}
+        for tab in {str(w["field_tab_id"]) for w in config.ANYTIME_ITEM_WORKFLOWS}:
+            for f in _tab_field_definitions(tab, auth):
+                if f["id"] in durable and f["id"] not in seen:
+                    items.append(f)
+                    seen.add(f["id"])
+        for fid in durable - {f["id"] for f in items}:
+            items.append({"id": fid, "name": f"field {fid}", "data_type": "select", "options": []})
+    return items
+
+
+def outstanding_items(person: dict, cfg: dict, auth) -> tuple[list[dict], list[dict]]:
+    """Split a workflow's anytime items into (satisfied, outstanding) for a person.
+
+    An item is satisfied when its stored value appears in `satisfying_values`.
+    Anything else — "Promised", blank, an unrecognised value — leaves it
+    outstanding, which is the conservative direction: the card parks rather than
+    completing on a value nobody intended to mean "done".
+    """
+    satisfying = set(cfg.get("satisfying_values", ["Done", "Not needed", "Waived"]))
+    custom_fields = person.get("custom_fields", {})
+    satisfied, outstanding = [], []
+    for item in _gate_items(cfg, auth):
+        values = custom_fields.get(str(item["id"]), [])
+        # A renamed dropdown option silently blocks every card, so say so loudly.
+        for v in values:
+            if v and item["options"] and v not in item["options"]:
+                logger.warning(
+                    f"anytime item '{item['name']}' ({item['id']}) holds {v!r}, which is not "
+                    f"one of its options {item['options']} — was the dropdown edited in PCP?"
+                )
+        if any(v in satisfying for v in values):
+            satisfied.append(item)
+        else:
+            outstanding.append(item)
+    return satisfied, outstanding
+
+
+def workflows_for_field(field_definition_id: str, auth) -> list[dict]:
+    """Return anytime configs whose gate depends on the given field.
+
+    A field_datum event carries only a field id, so this maps a field change back
+    to the gates it could unblock — matching either a `select` field on a
+    configured tab, or a durable field named by requires_person_fields.
+    """
+    fid = str(field_definition_id)
+    hits = []
+    for cfg in config.ANYTIME_ITEM_WORKFLOWS:
+        if fid in {str(x) for x in cfg.get("requires_person_fields", [])}:
+            hits.append(cfg)
+            continue
+        try:
+            if any(f["id"] == fid for f in _tab_field_definitions(cfg["field_tab_id"], auth)):
+                hits.append(cfg)
+        except requests.RequestException as e:
+            logger.warning(f"workflows_for_field: could not read tab {cfg.get('field_tab_id')}: {e}")
+    return hits
+
+
+def reevaluate_gates_for_field(person_id: str, field_definition_id: str) -> list[str]:
+    """Re-run the gate for every workflow this person is in that the field affects.
+
+    This is what makes an item genuinely "anytime": satisfying it while the card
+    is still on an early sequential step records the value and does nothing, and
+    satisfying it while the card waits on the gate releases the card immediately.
+    """
+    if not config.ANYTIME_ITEM_WORKFLOWS:
+        return []
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    results = []
+    for cfg in workflows_for_field(field_definition_id, auth):
+        workflow_id = cfg["workflow_id"]
+        try:
+            cards = _active_cards_in_workflow(person_id, workflow_id, auth)
+        except requests.RequestException as e:
+            logger.warning(f"reevaluate_gates_for_field: card lookup failed for {person_id}: {e}")
+            continue
+        for card in cards:
+            step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
+            results.append(evaluate_gate(person_id, workflow_id, card["id"], step))
+    return results
+
+
+def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_id: str) -> str:
+    """Promote a card sitting on its gate step once every anytime item is satisfied.
+
+    Returns a short status string for logging/response. No-op for workflows with
+    no anytime config, and for cards not currently on the gate step.
+    """
+    cfg = config.anytime_workflow(workflow_id)
+    if not cfg:
+        return "no-gate-config"
+    if current_step_id != str(cfg.get("gate_step_id", "")):
+        return "not-on-gate"
+
+    pcp_data = fetch_person_from_pcp(person_id)
+    if not pcp_data:
+        logger.warning(f"evaluate_gate: could not fetch person {person_id}")
+        return "person-fetch-failed"
+    person = parse_person(pcp_data)
+
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    satisfied, outstanding = outstanding_items(person, cfg, auth)
+    names = [i["name"] for i in outstanding]
+    logger.info(
+        f"evaluate_gate: person={person_id} workflow={workflow_id} card={card_id} "
+        f"satisfied={[i['name'] for i in satisfied]} outstanding={names}"
+    )
+
+    if outstanding:
+        note = "Outstanding before this workflow can complete: " + ", ".join(names)
+        _add_card_note(workflow_id, card_id, note, auth)
+        return f"parked ({len(outstanding)} outstanding)"
+
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would promote card {card_id} past gate in workflow {workflow_id}")
+        return "would-promote"
+    try:
+        r = requests.post(
+            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards/{card_id}/promote",
+            auth=auth, timeout=10,
+        )
+        r.raise_for_status()
+        logger.info(f"evaluate_gate: promoted card {card_id} past gate  HTTP {r.status_code}")
+        return "promoted"
+    except requests.RequestException as e:
+        logger.error(f"evaluate_gate: promote failed for card {card_id}: {e}")
+        if hasattr(e, "response") and e.response is not None:
+            logger.error(f"PCP API error body: {e.response.text}")
+        return "promote-failed"
+
+
+def _add_card_note(workflow_id: str, card_id: str, note: str, auth) -> None:
+    """Best-effort note on a workflow card. Never raises — notes are not the point."""
+    if config.TEST_MODE:
+        logger.info(f"TEST_MODE — would note card {card_id}: {note}")
+        return
+    try:
+        requests.post(
+            f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards/{card_id}/notes",
+            json={"data": {"type": "WorkflowCardNote", "attributes": {"note": note}}},
+            auth=auth, timeout=10,
+        ).raise_for_status()
+    except requests.RequestException as e:
+        logger.warning(f"could not add note to card {card_id}: {e}")
+
+
+def clear_consumable_items(person_id: str, workflow_id: str, card_id: str) -> None:
+    """On enrolment, reset this workflow's anytime items so the run starts clean.
+
+    Prior values are written to the new card's notes first, so "bought a shirt in
+    2026" survives on the card even though the live field resets for 2027.
+    Durable prerequisites (requires_person_fields) are never cleared — that is
+    the whole point of keeping them on a separate tab.
+    """
+    cfg = config.anytime_workflow(workflow_id)
+    if not cfg:
+        return
+    pcp_data = fetch_person_from_pcp(person_id)
+    if not pcp_data:
+        return
+    person = parse_person(pcp_data)
+    custom_fields = person.get("custom_fields", {})
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    durable = {str(x) for x in cfg.get("requires_person_fields", [])}
+
+    carried = []
+    for item in _gate_items(cfg, auth):
+        if item["id"] in durable:
+            continue
+        values = [v for v in custom_fields.get(str(item["id"]), []) if v]
+        if values:
+            carried.append(f"{item['name']}: {', '.join(values)}")
+            clear_custom_field(person_id, item["id"])
+    if carried:
+        _add_card_note(workflow_id, card_id,
+                       "Carried over from the previous enrolment (now reset): "
+                       + "; ".join(carried), auth)
+        logger.info(f"clear_consumable_items: reset {len(carried)} item(s) for person {person_id}")
+
+
+# ─── Readiness report ─────────────────────────────────────────────────────────
+# The operational question is not "is Bob's card correct" but "who among these 40
+# people still owes what, and how do I reach them before Saturday". A card parks
+# on one step, so the PCP workflow UI cannot answer that — this can.
+
+def _person_for_report(person_id: str, auth) -> dict:
+    """Fetch one person with the fields the report needs (email, phone, customs)."""
+    r = requests.get(
+        f"{config.PCP_API_BASE}/people/{person_id}",
+        params={"include": "emails,phone_numbers,field_data"},
+        auth=auth, timeout=10,
+    )
+    r.raise_for_status()
+    body = r.json()
+    person = parse_person(body)
+    person["phone"] = next(
+        (i.get("attributes", {}).get("number", "")
+         for i in body.get("included", [])
+         if i.get("type") == "PhoneNumber"),
+        "",
+    )
+    return person
+
+
+def build_readiness(workflow_id: str) -> dict:
+    """Assemble the person x item matrix for one workflow.
+
+    Returns {config, items, notes_field, rows, totals}. Rows are sorted with the
+    most outstanding first, so the chase list is the top of the page.
+    """
+    cfg = config.anytime_workflow(workflow_id)
+    if not cfg:
+        raise ValueError(f"workflow {workflow_id} has no anytime_item_workflows config")
+
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    items = _gate_items(cfg, auth)
+    notes_field = str(cfg.get("notes_field_id", "")) or None
+
+    cards = requests.get(
+        f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
+        params={"include": "person", "per_page": 100}, auth=auth, timeout=15,
+    )
+    cards.raise_for_status()
+    active = [
+        c for c in cards.json().get("data", [])
+        if c["attributes"].get("removed_at") is None
+        and c["attributes"].get("stage") != "completed"
+    ]
+    person_ids = [
+        (c.get("relationships", {}).get("person", {}).get("data") or {}).get("id")
+        for c in active
+    ]
+    person_ids = [p for p in person_ids if p]
+
+    # Sequential fetches would make a 40-person page take ~10s; a small pool keeps
+    # it responsive without hammering the PCP rate limit.
+    people: dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_person_for_report, pid, auth): pid for pid in person_ids}
+        for fut in as_completed(futures):
+            pid = futures[fut]
+            try:
+                people[pid] = fut.result()
+            except requests.RequestException as e:
+                logger.warning(f"build_readiness: could not fetch person {pid}: {e}")
+
+    satisfying = set(cfg.get("satisfying_values", ["Done", "Not needed", "Waived"]))
+    exempt = {"Not needed", "Waived"}
+    rows, per_item = [], {i["id"]: {"outstanding": 0, "exempt": 0} for i in items}
+
+    for pid, person in people.items():
+        custom = person.get("custom_fields", {})
+        cells, missing = [], 0
+        for item in items:
+            values = [v for v in custom.get(str(item["id"]), []) if v]
+            value = values[0] if values else ""
+            done = any(v in satisfying for v in values)
+            if not done:
+                missing += 1
+                per_item[item["id"]]["outstanding"] += 1
+            elif value in exempt:
+                per_item[item["id"]]["exempt"] += 1
+            cells.append({"value": value, "done": done,
+                          "exempt": done and value in exempt})
+        rows.append({
+            "name":    f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
+            "email":   person.get("email", ""),
+            "phone":   person.get("phone", ""),
+            "cells":   cells,
+            "missing": missing,
+            "notes":   (custom.get(notes_field, [""])[0] if notes_field else ""),
+        })
+
+    rows.sort(key=lambda r: (-r["missing"], r["name"]))
+    return {
+        "config": cfg, "items": items, "rows": rows,
+        "totals": {
+            "enrolled":    len(rows),
+            "ready":       sum(1 for r in rows if r["missing"] == 0),
+            "outstanding": sum(1 for r in rows if r["missing"] > 0),
+            "per_item":    per_item,
+        },
+    }
+
+
+def render_readiness_html(data: dict) -> str:
+    """Render the matrix as a standalone page — no external assets, no CDN."""
+    cfg, items, rows, totals = data["config"], data["items"], data["rows"], data["totals"]
+    esc = html_escape
+
+    head = "".join(f"<th>{esc(i['name'])}</th>" for i in items)
+    body = []
+    for r in rows:
+        cells = []
+        for c in r["cells"]:
+            if c["exempt"]:
+                cls, text = "exempt", c["value"]
+            elif c["done"]:
+                cls, text = "done", c["value"] or "Done"
+            else:
+                cls, text = "todo", c["value"] or "—"
+            cells.append(f'<td class="{cls}">{esc(text)}</td>')
+        klass = "ready" if r["missing"] == 0 else ""
+        body.append(
+            f'<tr class="{klass}"><td class="nm">{esc(r["name"])}</td>'
+            f'<td class="qt">{esc(r["phone"])}</td>'
+            f'<td class="qt">{esc(r["email"])}</td>'
+            + "".join(cells)
+            + f'<td class="miss">{r["missing"] or ""}</td>'
+            f'<td class="qt">{esc(r["notes"])}</td></tr>'
+        )
+
+    summary = "  ".join(
+        f'<span class="pill">{esc(i["name"])}: '
+        f'{totals["per_item"][i["id"]]["outstanding"]} outstanding'
+        + (f' ({totals["per_item"][i["id"]]["exempt"]} not needed)'
+           if totals["per_item"][i["id"]]["exempt"] else "")
+        + "</span>"
+        for i in items
+    )
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(cfg.get('description','Readiness'))} — Readiness</title>
+<style>
+ :root {{ color-scheme: light dark; }}
+ body {{ font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        margin:0; padding:1.5rem; }}
+ h1 {{ font-size:1.25rem; margin:0 0 .25rem; }}
+ .sub {{ opacity:.7; font-size:.85rem; margin-bottom:1rem; }}
+ .totals {{ margin:0 0 1rem; font-size:.9rem; }}
+ .pill {{ display:inline-block; padding:.15rem .5rem; margin:.15rem .3rem .15rem 0;
+          border:1px solid currentColor; border-radius:1rem; opacity:.85; }}
+ .wrap {{ overflow-x:auto; }}
+ table {{ border-collapse:collapse; min-width:100%; }}
+ th,td {{ padding:.4rem .6rem; text-align:left; white-space:nowrap;
+          border-bottom:1px solid rgba(128,128,128,.25); }}
+ th {{ font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }}
+ .nm {{ font-weight:600; }}
+ .qt {{ opacity:.75; font-size:.9em; }}
+ .todo {{ color:#b3261e; font-weight:600; }}
+ .done {{ color:#1b6b3a; }}
+ .exempt {{ opacity:.55; font-style:italic; }}
+ .miss {{ font-weight:700; text-align:center; }}
+ tr.ready {{ opacity:.5; }}
+ @media (prefers-color-scheme: dark) {{
+   .todo {{ color:#ff8a80; }} .done {{ color:#7ddc9a; }}
+ }}
+</style></head><body>
+<h1>{esc(cfg.get('description','Readiness'))} — Readiness</h1>
+<div class="sub">workflow {esc(str(cfg.get('workflow_id')))} ·
+ items from tab {esc(str(cfg.get('field_tab_id')))} ·
+ generated {datetime.now().strftime('%Y-%m-%d %H:%M')}</div>
+<div class="totals"><strong>{totals['enrolled']} enrolled · {totals['ready']} ready ·
+ {totals['outstanding']} outstanding</strong><br>{summary}</div>
+<div class="wrap"><table>
+<thead><tr><th>Name</th><th>Phone</th><th>Email</th>{head}<th>Miss</th><th>Notes</th></tr></thead>
+<tbody>{''.join(body)}</tbody></table></div>
+</body></html>"""
+
+
+# ─── Brevo chase email ────────────────────────────────────────────────────────
+# One message per person naming only their own outstanding items. A PCP dynamic
+# List per item is the zero-code alternative, but someone missing three things
+# gets three generic blasts from it; this sends them one useful email.
+
+BREVO_SEND_URL = "https://api.brevo.com/v3/smtp/email"
+
+
+def _chase_email_html(row: dict, cfg: dict) -> str:
+    """Body for one person's chase email — their outstanding items, nothing else."""
+    esc = html_escape
+    missing = "".join(f"<li>{esc(c['name'])}</li>" for c in row["outstanding_names"])
+    event = esc(cfg.get("description", "this event"))
+    return (
+        f"<p>Hi {esc(row['name'].split(' ')[0] or 'there')},</p>"
+        f"<p>Before {event}, we still need:</p>"
+        f"<ul>{missing}</ul>"
+        f"<p>Everything else on your list is complete — thank you!</p>"
+    )
+
+
+def send_chase_emails(workflow_id: str, dry_run: bool = True) -> dict:
+    """Email everyone in the workflow who still has outstanding items.
+
+    Defaults to dry_run: sending mail to a cohort is not something to trigger by
+    accident, so the caller has to ask for it explicitly.
+    """
+    data = build_readiness(workflow_id)
+    cfg, items = data["config"], data["items"]
+    sender = cfg.get("sender", {})
+
+    targets = []
+    for row in data["rows"]:
+        if row["missing"] == 0 or not row["email"]:
+            continue
+        row = {**row, "outstanding_names": [
+            items[idx] for idx, cell in enumerate(row["cells"]) if not cell["done"]
+        ]}
+        targets.append(row)
+
+    if dry_run or config.TEST_MODE:
+        for t in targets:
+            logger.info(f"DRY RUN — would email {t['email']}: "
+                        f"{[i['name'] for i in t['outstanding_names']]}")
+        return {"sent": 0, "would_send": len(targets), "dry_run": True,
+                "recipients": [t["email"] for t in targets]}
+
+    api_key = get_secret("BREVO_API_KEY")
+    headers = {"api-key": api_key, "content-type": "application/json",
+               "accept": "application/json"}
+    sent, failed = 0, []
+    for t in targets:
+        payload = {
+            "sender": {"name":  sender.get("name", "4th Universalist"),
+                       "email": sender.get("email", "office2@4thu.org")},
+            "to": [{"email": t["email"], "name": t["name"]}],
+            "subject": f"{cfg.get('description', 'Upcoming event')} — "
+                       f"{t['missing']} item{'s' if t['missing'] != 1 else ''} still needed",
+            "htmlContent": _chase_email_html(t, cfg),
+        }
+        try:
+            r = requests.post(BREVO_SEND_URL, json=payload, headers=headers, timeout=15)
+            r.raise_for_status()
+            sent += 1
+        except requests.RequestException as e:
+            logger.error(f"Brevo send failed for {t['email']}: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                logger.error(f"Brevo error body: {e.response.text}")
+            failed.append(t["email"])
+    logger.info(f"send_chase_emails: workflow {workflow_id} — sent {sent}, failed {len(failed)}")
+    return {"sent": sent, "failed": failed, "dry_run": False}
+
+
 # ─── Flask routes ─────────────────────────────────────────────────────────────
 
 @app.route("/webhook", methods=["GET", "POST"])
@@ -1025,6 +1596,20 @@ def _handle_webhook_post():
         # card or moving a step would re-fire the workflow's "entered" rules.
         person_id   = event.person_id
         workflow_id = event.workflow_id
+
+        # Anytime-item gate. A step move is exactly the event the rest of this
+        # handler discards, and exactly the one the gate needs: it carries the
+        # step the card just landed on. Scoped to workflows with a gate config so
+        # every other workflow keeps its existing ignore-the-step-move behaviour.
+        if (event_name == "people.v2.events.workflow_card.updated"
+                and event.stage != "completed"
+                and person_id
+                and config.anytime_workflow(workflow_id)):
+            result = evaluate_gate(person_id, workflow_id, event.card_id, event.current_step_id)
+            if result != "not-on-gate":
+                return jsonify({"status": "ok", "event": event_name,
+                                "gate": result, "person_id": person_id}), 200
+
         if event_name == "people.v2.events.workflow_card.created":
             trigger = "entered"
         elif event.stage == "completed":
@@ -1065,6 +1650,14 @@ def _handle_webhook_post():
                 matched = True
             if rule.get("add_to_workflow_id") or rule.get("remove_workflow_id"):
                 logger.info(f"Workflow chain rule applied: '{rule['description']}'")
+
+        # A fresh enrolment starts with a clean slate: reset this workflow's
+        # consumable anytime items so last year's shirt does not satisfy this
+        # year's gate. Durable prerequisites are deliberately left alone.
+        if (event_name == "people.v2.events.workflow_card.created"
+                and config.anytime_workflow(workflow_id)):
+            clear_consumable_items(person_id, workflow_id, event.card_id)
+            matched = True
 
         # PCP workflow override: on entry to a workflow, if a field-based
         # override rule matches, redirect to the rule's target workflow.
@@ -1129,6 +1722,16 @@ def _handle_webhook_post():
             else:
                 logger.info(f"Field datum rule not matched: '{rule['description']}' "
                             f"(field_id={field_id}, value={value!r}, want '{pcp_value}')")
+
+        # An anytime item may have just been satisfied. If the person's card is
+        # already waiting on that workflow's gate, this releases it now; if the
+        # card is still on an earlier sequential step, this is a no-op and the
+        # value simply waits there until the card arrives.
+        gate_results = reevaluate_gates_for_field(person_id, field_id)
+        if gate_results:
+            matched = True
+            logger.info(f"Anytime gate re-evaluated for person {person_id} "
+                        f"field {field_id}: {gate_results}")
 
         if not matched:
             logger.info(f"No field datum rules matched field_id={field_id} person_id={person_id}")
@@ -1219,6 +1822,60 @@ def _handle_webhook_post():
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
+
+
+@app.route("/readiness/<workflow_id>", methods=["GET"])
+def readiness(workflow_id: str):
+    """Who in this workflow still owes what. Queries PCP on load, so never stale.
+
+    Guarded by a shared secret because this service is publicly reachable and the
+    page carries names, emails and phone numbers. Set READINESS_TOKEN in Secret
+    Manager; without it the route stays disabled rather than open.
+    """
+    try:
+        expected = get_secret("READINESS_TOKEN")
+    except Exception:
+        logger.warning("readiness: READINESS_TOKEN secret missing — route disabled")
+        return jsonify({"error": "readiness report not configured"}), 503
+    if not expected or not hmac.compare_digest(request.args.get("key", ""), expected):
+        return jsonify({"error": "unauthorized"}), 401
+
+    try:
+        data = build_readiness(workflow_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except requests.RequestException as e:
+        logger.error(f"readiness: PCP fetch failed for workflow {workflow_id}: {e}")
+        return jsonify({"error": "could not reach Planning Center"}), 502
+
+    if request.args.get("format") == "json":
+        return jsonify(data), 200
+    return Response(render_readiness_html(data), mimetype="text/html")
+
+
+@app.route("/readiness/<workflow_id>/chase", methods=["POST"])
+def readiness_chase(workflow_id: str):
+    """Send each person with outstanding items one email listing just theirs.
+
+    POST, not GET, because this reaches real people — a link someone clicks twice
+    must not mail the cohort twice. Dry run unless ?send=true is passed, so the
+    default outcome of getting this wrong is a log line, not an inbox.
+    """
+    try:
+        expected = get_secret("READINESS_TOKEN")
+    except Exception:
+        return jsonify({"error": "readiness report not configured"}), 503
+    if not expected or not hmac.compare_digest(request.args.get("key", ""), expected):
+        return jsonify({"error": "unauthorized"}), 401
+
+    dry_run = request.args.get("send") != "true"
+    try:
+        return jsonify(send_chase_emails(workflow_id, dry_run=dry_run)), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except requests.RequestException as e:
+        logger.error(f"readiness_chase: PCP fetch failed for {workflow_id}: {e}")
+        return jsonify({"error": "could not reach Planning Center"}), 502
 
 
 @app.route("/settings", methods=["GET"])

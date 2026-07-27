@@ -56,7 +56,8 @@
       "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\nseverity>=WARNING\ntimestamp>=\"2026-06-01T00:00:00Z\"\n *)",
       "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\n\\(jsonPayload.body:\"198459095\" OR textPayload:\"198459095\"\\)\n *)",
       "Bash(gcloud logging read \nresource.type=\"cloud_run_revision\"\nresource.labels.service_name=\"pcp-to-cc\"\ntimestamp>=\"2026-07-23T22:49:40Z\"\ntimestamp<=\"2026-07-23T22:52:10Z\"\n *)",
-      "Bash(gcloud logging read *)"
+      "Bash(gcloud logging read *)",
+      "Bash(TEST_MODE=true uv run python -c ' *)"
     ]
   }
 }

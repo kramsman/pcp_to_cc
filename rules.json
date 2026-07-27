@@ -78,6 +78,12 @@
       "add_to_workflow_id": "725397"
     },
     {
+      "description": "Thanks for your interest (non staff entry form) 1198369 submitted",
+      "form_id": "1198369",
+      "add_to_workflow_id": "754034",
+      "complete_workflow_id": ""
+    },
+    {
       "description": "Tell us about yourself (1197074) submitted",
       "form_id": "1197074",
       "complete_workflow_id": "725397",
@@ -94,6 +100,7 @@
       "displaces_workflow_id": ""
     }
   ],
+  "anytime_item_workflows": [],
   "cc_list_rules": [
     {
       "description": "Newsletter opt-in \u2192 newsletter list",

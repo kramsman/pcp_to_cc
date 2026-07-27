@@ -94,10 +94,14 @@ def fetch_pcp_ids() -> dict:
     print("Fetching PCP field definitions...")
     fields = _fetch_all("field_definitions", auth, dummy)
     print(f"  {len(fields)} field definitions")
+    print("Fetching PCP field tabs...")
+    tabs = _fetch_all("tabs", auth, dummy)
+    print(f"  {len(tabs)} tabs")
     return {
         "pcp_workflow": [{"id": w["id"], "name": w["attributes"].get("name", "")} for w in workflows],
         "pcp_form":     [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in forms],
         "pcp_field":    [{"id": f["id"], "name": f["attributes"].get("name", "")} for f in fields],
+        "pcp_tab":      [{"id": t["id"], "name": t["attributes"].get("name", "")} for t in tabs],
     }
 
 
@@ -139,18 +143,52 @@ def main():
             _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<50}  {active}")
         _emit(lines, f"\nTotal: {len(forms)} forms")
 
+    # --- Tabs ---
+    # Tabs group custom fields on a person's profile, and are how anytime-item
+    # workflows find their items: the config names a tab, and the dropdown fields
+    # on it are the items. Nothing in PCP links a tab to a workflow — that link
+    # lives only in rules.json.
+    _emit(lines, "\n\n=== Field Tabs ===\n")
+    tabs = _fetch_all("tabs", auth, lines)
+    tab_names = {t["id"]: t.get("attributes", {}).get("name", "") for t in tabs}
+    if not tabs:
+        _emit(lines, "No tabs found.")
+    else:
+        _emit(lines, f"{'ID':<12}  {'Name':<50}  Sequence")
+        _emit(lines, "-" * 76)
+        for t in sorted(tabs, key=lambda x: x.get("attributes", {}).get("sequence", 0)):
+            attrs = t.get("attributes", {})
+            _emit(lines, f"{t['id']:<12}  {attrs.get('name',''):<50}  {attrs.get('sequence','')}")
+        _emit(lines, f"\nTotal: {len(tabs)} tabs")
+
     # --- Custom Fields ---
-    _emit(lines, "\n\n=== Custom Fields ===\n")
+    # Grouped by tab, since that is how they appear on a profile and how the
+    # anytime-item gate discovers them. Only `select` fields can gate a workflow.
+    _emit(lines, "\n\n=== Custom Fields (by tab) ===\n")
     fields = _fetch_all("field_definitions", auth, lines)
     if not fields:
         _emit(lines, "No field definitions found.")
     else:
-        _emit(lines, f"{'ID':<12}  {'Name':<40}  Field Type")
-        _emit(lines, "-" * 70)
+        by_tab: dict[str, list[dict]] = {}
         for f in fields:
-            attrs = f.get("attributes", {})
-            _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<40}  {attrs.get('field_type','')}")
-        _emit(lines, f"\nTotal: {len(fields)} field definitions")
+            if f.get("attributes", {}).get("deleted_at"):
+                continue
+            tab_id = str(f.get("attributes", {}).get("tab_id", "") or "")
+            by_tab.setdefault(tab_id, []).append(f)
+        shown = 0
+        for tab_id, tab_fields in sorted(by_tab.items(),
+                                         key=lambda kv: tab_names.get(kv[0], "zz")):
+            label = tab_names.get(tab_id, "(no tab)")
+            _emit(lines, f"\n-- tab {tab_id or '?'}: {label} --")
+            _emit(lines, f"{'ID':<12}  {'Name':<40}  Data Type")
+            _emit(lines, "-" * 70)
+            for f in tab_fields:
+                attrs = f.get("attributes", {})
+                dtype = attrs.get("data_type", "")
+                gate = "  <- can gate" if dtype == "select" else ""
+                _emit(lines, f"{f['id']:<12}  {attrs.get('name',''):<40}  {dtype}{gate}")
+                shown += 1
+        _emit(lines, f"\nTotal: {shown} field definitions")
 
     out_path = os.path.splitext(os.path.abspath(__file__))[0] + ".txt"
     with open(out_path, "w", encoding="utf-8") as fh:
