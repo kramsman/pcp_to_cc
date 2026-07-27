@@ -100,7 +100,17 @@
       "displaces_workflow_id": ""
     }
   ],
-  "anytime_item_workflows": [],
+  "anytime_item_workflows": [
+    {
+      "description": "Ceremony non-sequential fields",
+      "workflow_id": "730471",
+      "field_tab_id": "263604",
+      "gate_step_id": "2096759",
+      "satisfying_values": "Done, Not Needed, Not needed",
+      "requires_person_fields": "1089420",
+      "notes_field_id": "1089422"
+    }
+  ],
   "cc_list_rules": [
     {
       "description": "Newsletter opt-in \u2192 newsletter list",

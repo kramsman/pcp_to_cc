@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QFormLayout,
     QLineEdit, QComboBox, QMessageBox, QDialogButtonBox, QLabel,
+    QListWidget, QListWidgetItem,
 )
 
 RULES_FILE = Path(__file__).parent / "rules.json"
@@ -149,9 +150,18 @@ TABS = [
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",
         },
-        "widths":        [260, 150, 200, 120, 200, 200, 160],
+        "widths":        [260, 150, 200, 200, 200, 200, 160],
         "trigger_field": None,
         "optional_cols": ["requires_person_fields", "notes_field_id"],
+        # Choices that only exist once another field is chosen: a workflow's
+        # steps, and the dropdown values used by the items on a tab.
+        "dependent_cols": {
+            "gate_step_id":      {"source": "workflow_id",  "fetch": "workflow_steps"},
+            "satisfying_values": {"source": "field_tab_id", "fetch": "tab_option_values",
+                                  "multi": True},
+        },
+        # Several ids at once, so a checkbox list rather than a single dropdown.
+        "multi_cols": {"requires_person_fields": "pcp_field"},
     },
     {
         "title":         "CC Lists from Fields",
@@ -203,6 +213,139 @@ def _ensure_api_data() -> None:
     print(f"API data: { {k: len(v) for k, v in _api_cache.items()} }")
 
 
+# ── Dependent dropdown data ───────────────────────────────────────────────────
+# Some choices only make sense once another has been made: a workflow's steps
+# depend on the workflow, and the values that count as "done" depend on which
+# tab holds the items. These are fetched on demand and cached per parent id.
+
+_dependent_cache: dict[tuple, list] = {}
+
+
+def _pcp_auth() -> tuple:
+    from find_pcp_ids import _get_secret
+    return (_get_secret("PCP_APP_ID"), _get_secret("PCP_SECRET"))
+
+
+def fetch_workflow_steps(workflow_id: str) -> list[dict]:
+    """Return [{id, name}] for a workflow's steps, ordered as they run."""
+    if not workflow_id:
+        return []
+    key = ("steps", workflow_id)
+    if key in _dependent_cache:
+        return _dependent_cache[key]
+    try:
+        import requests
+        from find_pcp_ids import PCP_API_BASE
+        r = requests.get(f"{PCP_API_BASE}/workflows/{workflow_id}/steps",
+                         params={"per_page": 100}, auth=_pcp_auth(), timeout=10,
+                         headers={"User-Agent": "pco_webhook (office2@4thu.org)"})
+        r.raise_for_status()
+        steps = sorted(r.json().get("data", []),
+                       key=lambda s: s.get("attributes", {}).get("sequence", 0))
+        result = [{"id": s["id"],
+                   "name": f"{s['attributes'].get('sequence', '?')}. {s['attributes'].get('name', '')}"}
+                  for s in steps]
+    except BaseException as e:
+        print(f"Warning: could not fetch steps for workflow {workflow_id} ({e})")
+        result = []
+    _dependent_cache[key] = result
+    return result
+
+
+def fetch_tab_option_values(tab_id: str) -> list[dict]:
+    """Return the distinct dropdown option values across a tab's `select` fields.
+
+    Only `select` fields can gate a workflow, so only their options can sensibly
+    be marked as satisfying. The three defaults are always offered so a tab whose
+    dropdowns are not built yet still produces a usable rule.
+    """
+    defaults = ["Done", "Not needed", "Waived"]
+    if not tab_id:
+        return [{"id": v, "name": v} for v in defaults]
+    key = ("options", tab_id)
+    if key in _dependent_cache:
+        return _dependent_cache[key]
+    values: list[str] = []
+    try:
+        import requests
+        from find_pcp_ids import PCP_API_BASE
+        r = requests.get(f"{PCP_API_BASE}/tabs/{tab_id}/field_definitions",
+                         params={"include": "field_options", "per_page": 100},
+                         auth=_pcp_auth(), timeout=10,
+                         headers={"User-Agent": "pco_webhook (office2@4thu.org)"})
+        r.raise_for_status()
+        body = r.json()
+        by_id = {i["id"]: i["attributes"]["value"]
+                 for i in body.get("included", []) if i.get("type") == "FieldOption"}
+        for f in body.get("data", []):
+            if f["attributes"].get("data_type") != "select":
+                continue
+            for rel in (f.get("relationships", {}).get("field_options", {}).get("data") or []):
+                v = by_id.get(rel["id"])
+                if v and v not in values:
+                    values.append(v)
+    except BaseException as e:
+        print(f"Warning: could not fetch options for tab {tab_id} ({e})")
+    for d in defaults:
+        if d not in values:
+            values.append(d)
+    result = [{"id": v, "name": v} for v in values]
+    _dependent_cache[key] = result
+    return result
+
+
+DEPENDENT_FETCHERS = {
+    "workflow_steps":    fetch_workflow_steps,
+    "tab_option_values": fetch_tab_option_values,
+}
+
+
+class MultiSelectList(QListWidget):
+    """Checkbox list whose value is a comma-separated string.
+
+    Used where a rule takes several ids or values at once. Anything already in
+    the rule stays checked even if it is no longer offered by the API, so opening
+    and saving a rule can never silently drop a value.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMaximumHeight(110)
+        self.setAlternatingRowColors(True)
+        # An item view with input methods enabled swallows keystrokes meant for
+        # other widgets on macOS, which leaves the text fields in this dialog
+        # looking editable but ignoring the keyboard. Same workaround the rules
+        # table already needs — see TabWidget below.
+        self.setAttribute(Qt.WA_InputMethodEnabled, False)
+        self.viewport().setAttribute(Qt.WA_InputMethodEnabled, False)
+
+    def set_items(self, items: list[dict], selected_csv: str) -> None:
+        selected = [s.strip() for s in (selected_csv or "").split(",") if s.strip()]
+        self.clear()
+        offered = set()
+        for item in items:
+            label = item["name"] if item["name"] == item["id"] else f"{item['name']} ({item['id']})"
+            self._add(label, item["id"], item["id"] in selected)
+            offered.add(item["id"])
+        for missing in selected:
+            if missing not in offered:
+                self._add(f"⚠ {missing} (not offered)", missing, True)
+
+    def _add(self, label: str, value: str, checked: bool) -> None:
+        row = QListWidgetItem(label)
+        row.setFlags(row.flags() | Qt.ItemIsUserCheckable)
+        row.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+        row.setData(Qt.UserRole, value)
+        self.addItem(row)
+
+    def values_csv(self) -> str:
+        return ", ".join(
+            self.item(i).data(Qt.UserRole)
+            for i in range(self.count())
+            if self.item(i).checkState() == Qt.Checked
+        )
+
+
 class RuleDialog(QDialog):
     def __init__(self, tab: dict, initial: dict, parent=None):
         super().__init__(parent)
@@ -212,11 +355,30 @@ class RuleDialog(QDialog):
         layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         self._entries = {}
         self._id_dropdown_cols: set = set()
+        self._multi_cols: set = set()
         optional_cols = set(tab.get("optional_cols", []))
+        multi_cols = tab.get("multi_cols", {})        # col -> api_key, checkbox list
+        dependent_cols = tab.get("dependent_cols", {})  # col -> {source, fetch, multi}
+
         for col in tab["cols"]:
             api_key = DROPDOWN_FIELDS.get(col)
             items = _api_cache.get(api_key, []) if api_key else []
-            if items:
+
+            if col in dependent_cols:
+                # Populated from another field's current value — filled in below,
+                # once every widget exists and the source can be read.
+                if dependent_cols[col].get("multi"):
+                    widget = MultiSelectList()
+                    self._multi_cols.add(col)
+                else:
+                    widget = QComboBox()
+                    widget.setEditable(True)  # so an ID can still be typed if the fetch fails
+                    self._id_dropdown_cols.add(col)
+            elif col in multi_cols:
+                widget = MultiSelectList()
+                widget.set_items(_api_cache.get(multi_cols[col], []), initial.get(col, ""))
+                self._multi_cols.add(col)
+            elif items:
                 widget = QComboBox()
                 if col in optional_cols:
                     widget.addItem("(none)", "")
@@ -238,16 +400,62 @@ class RuleDialog(QDialog):
                 widget = QLineEdit(initial.get(col, ""))
             self._entries[col] = widget
             layout.addRow(tab["labels"][col] + ":", widget)
+
+        # Wire each dependent field to its source, then populate once so an
+        # existing rule opens with its current selection already showing.
+        for col, spec in dependent_cols.items():
+            source = self._entries.get(spec["source"])
+            target = self._entries[col]
+            fetch = DEPENDENT_FETCHERS[spec["fetch"]]
+
+            def repopulate(_=None, col=col, source=source, target=target, fetch=fetch):
+                parent_id = source.currentData() or source.currentText().strip()
+                self._fill_dependent(target, fetch(parent_id), initial.get(col, ""))
+
+            if isinstance(source, QComboBox):
+                source.currentIndexChanged.connect(repopulate)
+            repopulate()
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
 
+        # Land the cursor in the first text field rather than wherever the last
+        # widget built happened to leave it.
+        first_text = next((self._entries[c] for c in tab["cols"]
+                           if isinstance(self._entries[c], QLineEdit)), None)
+        if first_text is not None:
+            first_text.setFocus()
+
+    @staticmethod
+    def _fill_dependent(widget, items: list[dict], existing: str) -> None:
+        """Load a dependent widget's choices, keeping any value already saved."""
+        if isinstance(widget, MultiSelectList):
+            widget.set_items(items, existing)
+            return
+        widget.clear()
+        widget.addItem("(none)", "")
+        for item in items:
+            widget.addItem(f"{item['name']} ({item['id']})", item["id"])
+        idx = next((i for i in range(widget.count()) if widget.itemData(i) == existing), -1)
+        if idx >= 0:
+            widget.setCurrentIndex(idx)
+        elif existing:
+            widget.insertItem(1, f"⚠ Unknown: {existing}", existing)
+            widget.setCurrentIndex(1)
+
     def values(self) -> dict:
         result = {}
         for col, w in self._entries.items():
-            if col in self._id_dropdown_cols:
-                result[col] = w.currentData() or ""
+            if col in self._multi_cols:
+                result[col] = w.values_csv()
+            elif col in self._id_dropdown_cols:
+                # Editable combos return no data for typed text, so fall back to
+                # the raw text — a hand-entered ID must still save.
+                result[col] = w.currentData() or w.currentText().strip()
+                if result[col].startswith("(none)"):
+                    result[col] = ""
             elif isinstance(w, QComboBox):
                 result[col] = w.currentText()
             else:
@@ -379,7 +587,7 @@ class RuleEditor(QWidget):
             json.dump(data, f, indent=2)
 
         self.save_btn.setEnabled(False)
-        self.status_label.setText("Pushing rules to Cloud Run…")
+        self.status_label.setText("Pushing rules to Cloud Run (wait for 'Done' popup)....")
         self._push_process = QProcess(self)
         self._push_process.setWorkingDirectory(str(Path(__file__).parent))
         self._push_process.setProcessChannelMode(QProcess.MergedChannels)
