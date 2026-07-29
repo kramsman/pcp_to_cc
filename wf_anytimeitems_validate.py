@@ -284,39 +284,18 @@ def probe_send_email(auth: tuple, workflow: str, card: str) -> None:
 
 # ── Probe 5: validate configured anytime rules ───────────────────────────────
 
-STEP_MARKER = "--- required items (updated automatically) ---"
+_tab_name_cache: dict = {}
 
 
-def update_holding_step(rule: dict, item_names: list, auth: tuple) -> str:
-    """Append the current item list to the holding step's description.
-
-    Anything the user wrote above STEP_MARKER is preserved; only the block below
-    it is replaced. Returns a short status for the report — this edits the live
-    workflow, so it must never happen silently.
-    """
-    wf, step = str(rule.get("workflow_id", "")), str(rule.get("gate_step_id", ""))
-    if not (wf and step):
-        return "skipped — no holding step configured"
-
-    body = _get(f"workflows/{wf}/steps/{step}", auth).get("data", {})
-    current = (body.get("attributes", {}) or {}).get("description") or ""
-    kept = current.split(STEP_MARKER)[0].rstrip()
-
-    listing = ", ".join(item_names) if item_names else "(none — nothing is required)"
-    wanted = f"{kept}\n\n{STEP_MARKER}\n{listing}" if kept else f"{STEP_MARKER}\n{listing}"
-
-    if wanted.strip() == current.strip():
-        return "unchanged — already lists these items"
-    try:
-        r = requests.patch(
-            f"{PCP_API_BASE}/workflows/{wf}/steps/{step}",
-            json={"data": {"type": "WorkflowStep", "id": step,
-                           "attributes": {"description": wanted}}},
-            auth=auth, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        return f"rewritten to list: {listing}"
-    except requests.RequestException as e:
-        return f"FAILED to update ({e})"
+def tab_name(tab_id, auth) -> str:
+    """Tab name for an id, cached. Empty string if it cannot be read."""
+    key = str(tab_id or "")
+    if not key:
+        return ""
+    if key not in _tab_name_cache:
+        body = _get(f"tabs/{key}", auth).get("data", {})
+        _tab_name_cache[key] = (body.get("attributes", {}) or {}).get("name", "")
+    return _tab_name_cache[key]
 
 
 def _satisfying_values() -> list:
@@ -380,14 +359,19 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         gate = str(rule.get("gate_step_id", ""))
         match = next((s for s in steps if s["id"] == gate), None)
         if match:
-            seq = match["attributes"].get("sequence")
-            last = max((s["attributes"].get("sequence", 0) for s in steps), default=0)
-            _emit(f"  holding step {gate}: {match['attributes'].get('name')!r} at position {seq} of {last}")
-            if seq == last:
+            # Rank among the sorted steps, not PCP's raw `sequence`: that is
+            # 0-based on some workflows and 1-based on others, so printing it
+            # gives "1 of 2" for the middle of three steps.
+            order = sorted(steps, key=lambda x: x["attributes"].get("sequence", 0))
+            pos = next(i for i, x in enumerate(order, 1) if x["id"] == gate)
+            total = len(order)
+            _emit(f"  holding step {gate}: {match['attributes'].get('name')!r} "
+                  f"at position {pos} of {total}")
+            if pos == total:
                 _emit("    WARNING: the holding step is the LAST step. A staff member skipping it "
                       "completes the card outright, and recovery depends on go_back, which "
                       "is unverified. Add a trailing 'Confirm & finish' step.")
-            if seq == 0:
+            if pos == 1:
                 _emit("    WARNING: the holding step is the FIRST step, so every card waits there "
                       "immediately and the sequential steps never run.")
         else:
@@ -423,7 +407,8 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             else:
                 ignored.append((name, dtype))
 
-        _emit(f"  tab {tab}: {len(selects)} required item(s), {len(ignored)} ignored")
+        _emit(f"  tab {tab} {tab_name(tab, auth)!r}: {len(selects)} required item(s), "
+              f"{len(ignored)} ignored")
         for fid, name, opts in selects:
             _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
         for name, dtype in ignored:
@@ -461,6 +446,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                         _emit(f"          {name} ({fid}): " + ", ".join(bits))
                 _emit("          Clone from one template (Clone PCO Fields) to keep them "
                       "identical.")
+                _emit()
 
         if not selects:
             _emit("    ERROR: nothing on this tab is required, so the card is released "
@@ -473,13 +459,8 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         sat_lc = {v.strip().lower() for v in satisfying}
         opts_lc = {o.strip().lower() for o in all_options}
         unmatched = [v for v in satisfying if v.strip().lower() not in opts_lc]
-        _emit(f"  satisfying values: {satisfying}  (fixed for all workflows)")
+        _emit(f"  satisfying values: {satisfying}  (same for all workflows)")
 
-        # Keep the holding step telling staff which fields it checks. Done here
-        # because this is the documented thing to run after any change, and PCP
-        # has no event for "the fields on a tab changed".
-        _emit(f"  holding step description: "
-              f"{update_holding_step(rule, [n for _, n, _ in selects], auth)}")
         if unmatched:
             _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
                   f"intentional (e.g. spelling variants), but a typo here means the "
@@ -496,8 +477,9 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                 fd = _get(f"field_definitions/{fid}", auth).get("data", {})
                 attrs = fd.get("attributes", {})
                 dtype = attrs.get("data_type", "?")
+                t_id = attrs.get("tab_id")
                 _emit(f"  {label} field {fid}: {attrs.get('name', 'NOT FOUND')!r} "
-                      f"({dtype}) tab={attrs.get('tab_id')}")
+                      f"({dtype}) on tab {t_id} {tab_name(t_id, auth)!r}")
                 if not fd:
                     problems += 1
                     continue
@@ -528,7 +510,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
     _emit(f"\n{'=' * 78}")
     _emit(f"{problems} setup problem{'s' if problems != 1 else ''} found — fix these or "
           f"cards will never leave the holding step." if problems
-          else "No setup problems found. Safe to test against a real card.")
+          else "No setup problems found.")
     return problems, list(_lines)
 
 
@@ -619,6 +601,8 @@ def main() -> int:
     parser.add_argument("--workflow", help="workflow id (not needed for 'tabs')")
     parser.add_argument("--card", help="DISPOSABLE test card id (not needed for 'tabs')")
     parser.add_argument("--tab", help="for 'tabs': inspect this tab instead of the first")
+    parser.add_argument("--no-popup", action="store_true",
+                        help="skip the results dialog — for scripted or scheduled runs")
     parser.add_argument("--i-mean-it", action="store_true",
                         help="required for go-back and send-email, which mutate or send")
     args = parser.parse_args()
@@ -656,9 +640,9 @@ def main() -> int:
     OUTFILE.write_text(render_html(_lines, problems), encoding="utf-8")
     print(f"\nWritten to {OUTFILE}")
 
-    # Only pop a dialog when someone is actually watching. Without the TTY
-    # check this blocks forever when run from a script or a scheduler.
-    if not os.environ.get("CLOUD_RUN_JOB") and sys.stdout.isatty():
+    # Shown unless explicitly suppressed. isatty() was tried and is wrong here:
+    # PyCharm's console reports False, so the popup silently never appeared.
+    if not os.environ.get("CLOUD_RUN_JOB") and not args.no_popup:
         from uvbekutils.pyautobek import confirm_with_file_link
         headline = (f"{problems} setup problem{'s' if problems != 1 else ''} found — "
                     f"fix these or cards will never leave the holding step."
