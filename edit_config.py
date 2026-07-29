@@ -164,7 +164,7 @@ TABS = [
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",
         },
-        "widths":        [260, 150, 200, 200, 200, 200, 160],
+        "widths":        [300, 170, 220, 150, 220, 170],
         "trigger_field": None,
         "optional_cols": ["requires_person_fields", "notes_field_id"],
         # item_prefix is free text, not an ID lookup — no dropdown for it.
@@ -172,8 +172,6 @@ TABS = [
         # steps, and the dropdown values used by the items on a tab.
         "dependent_cols": {
             "gate_step_id":      {"source": "workflow_id",  "fetch": "workflow_steps"},
-            "satisfying_values": {"source": "field_tab_id", "fetch": "tab_option_values",
-                                  "multi": True},
             # Offers only dropdowns that live off the items tab, so a text field
             # or an items-tab field can no longer be chosen here — both would
             # park every card forever.
@@ -499,7 +497,9 @@ class RuleDialog(QDialog):
         # existing rule opens with its current selection already showing.
         for col, spec in dependent_cols.items():
             source = self._entries.get(spec["source"])
-            target = self._entries[col]
+            target = self._entries.get(col)
+            if source is None or target is None:
+                continue          # column not on this tab — ignore rather than crash
             fetch = DEPENDENT_FETCHERS[spec["fetch"]]
 
             def repopulate(_=None, col=col, source=source, target=target, fetch=fetch):
