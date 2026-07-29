@@ -408,13 +408,18 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             problems += 1
 
         satisfying = as_list(rule.get("satisfying_values"))
-        unmatched = [v for v in satisfying if v not in all_options]
+        # Compared case-insensitively, matching how the webhook decides —
+        # see satisfies() in pco_webhook/main.py.
+        sat_lc = {v.strip().lower() for v in satisfying}
+        opts_lc = {o.strip().lower() for o in all_options}
+        unmatched = [v for v in satisfying if v.strip().lower() not in opts_lc]
         _emit(f"  satisfying values: {satisfying}")
         if unmatched:
             _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
                   f"intentional (e.g. spelling variants), but a typo here means the "
                   f"item can never be satisfied.")
-        never = [(fid, n) for fid, n, o in selects if not set(o) & set(satisfying)]
+        never = [(fid, n) for fid, n, o in selects
+                 if not {x.strip().lower() for x in o} & sat_lc]
         for fid, n in never:
             _emit(f"    ERROR: item {n!r} ({fid}) has NO option that satisfies it — "
                   f"every card will park here forever.")
@@ -446,7 +451,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                     opts = [by_id[r["id"]] for r in
                             (fd.get("relationships", {}).get("field_options", {}).get("data") or [])
                             if r["id"] in by_id]
-                    if opts and not set(opts) & set(satisfying):
+                    if opts and not {x.strip().lower() for x in opts} & sat_lc:
                         _emit(f"    ERROR: options {opts} include no satisfying value.")
                         problems += 1
                 if str(attrs.get("tab_id")) == tab:
@@ -585,7 +590,9 @@ def main() -> int:
     OUTFILE.write_text(render_html(_lines, problems), encoding="utf-8")
     print(f"\nWritten to {OUTFILE}")
 
-    if not os.environ.get("CLOUD_RUN_JOB"):
+    # Only pop a dialog when someone is actually watching. Without the TTY
+    # check this blocks forever when run from a script or a scheduler.
+    if not os.environ.get("CLOUD_RUN_JOB") and sys.stdout.isatty():
         from uvbekutils.pyautobek import confirm_with_file_link
         headline = (f"{problems} setup problem{'s' if problems != 1 else ''} found — "
                     f"fix these or cards will never leave the holding step."

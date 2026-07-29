@@ -1121,6 +1121,16 @@ def _workflow_steps(workflow_id: str, auth) -> dict[str, int]:
     return steps
 
 
+def satisfies(value: str, satisfying_values) -> bool:
+    """Is this stored field value one that counts as done?
+
+    Case- and space-insensitive: the dropdown option is "Not Needed" but a rule
+    may reasonably say "not needed", and nobody should have to list a value twice
+    in two capitalisations to be safe.
+    """
+    return value.strip().lower() in {str(v).strip().lower() for v in satisfying_values}
+
+
 def _gate_items(cfg: dict, auth) -> list[dict]:
     """Return the fields that actually gate the workflow.
 
@@ -1173,7 +1183,7 @@ def outstanding_items(person: dict, cfg: dict, auth) -> tuple[list[dict], list[d
                     f"anytime item '{item['name']}' ({item['id']}) holds {v!r}, which is not "
                     f"one of its options {item['options']} — was the dropdown edited in PCP?"
                 )
-        if any(v in satisfying for v in values):
+        if any(satisfies(v, satisfying) for v in values):
             satisfied.append(item)
         else:
             outstanding.append(item)
@@ -1411,11 +1421,11 @@ def build_readiness(workflow_id: str) -> dict:
         for item in items:
             values = [v for v in custom.get(str(item["id"]), []) if v]
             value = values[0] if values else ""
-            done = any(v in satisfying for v in values)
+            done = any(satisfies(v, satisfying) for v in values)
             if not done:
                 missing += 1
                 per_item[item["id"]]["outstanding"] += 1
-            elif value in exempt:
+            elif satisfies(value, exempt):
                 per_item[item["id"]]["exempt"] += 1
             cells.append({"value": value, "done": done,
                           "exempt": done and value in exempt})
