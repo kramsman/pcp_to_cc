@@ -298,6 +298,16 @@ def tab_name(tab_id, auth) -> str:
     return _tab_name_cache[key]
 
 
+def _known_options() -> list:
+    """The approved item-dropdown vocabulary, from pco_webhook/config.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "pco_webhook"))
+        from pco_webhook import config
+        return list(config.KNOWN_ITEM_OPTIONS)
+    except Exception:
+        return ["Yes", "Not Needed", "Promised", "Waiting", "Later", "No"]
+
+
 def _satisfying_values() -> list:
     """The org-wide satisfying values, from pco_webhook/config.py."""
     try:
@@ -407,8 +417,8 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             else:
                 ignored.append((name, dtype))
 
-        _emit(f"  tab {tab} {tab_name(tab, auth)!r}: {len(selects)} required item(s), "
-              f"{len(ignored)} ignored")
+        _emit(f"  Field tab/screen {tab_name(tab, auth)!r} {tab} being used; "
+              f"{len(selects)} required, {len(ignored)} ignored")
         for fid, name, opts in selects:
             _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
         for name, dtype in ignored:
@@ -426,27 +436,20 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                   f"being ignored. Make it a dropdown or remove the prefix.")
             problems += 1
 
-        # Items built by hand drift apart — one ends up without "Promised", and
-        # nothing says so until someone looks for the missing choice.
-        if len(selects) > 1:
-            option_sets = {tuple(o) for _, _, o in selects}
-            if len(option_sets) > 1:
-                common = set.intersection(*(set(o) for _, _, o in selects))
-                _emit("    NOTE: these items do not all offer the same choices. Shared by "
-                      f"all: {sorted(common) if common else 'nothing'}.")
-                for fid, name, opts in selects:
-                    extra = sorted(set(opts) - common)
-                    missing = sorted(set().union(*(set(o) for _, _, o in selects)) - set(opts))
-                    if extra or missing:
-                        bits = []
-                        if missing:
-                            bits.append(f"missing {missing}")
-                        if extra:
-                            bits.append(f"only it has {extra}")
-                        _emit(f"          {name} ({fid}): " + ", ".join(bits))
-                _emit("          Clone from one template (Clone PCO Fields) to keep them "
-                      "identical.")
-                _emit()
+        # Every option is checked against one approved vocabulary. Comparing items
+        # to each other instead would nag about legitimate per-item values such as
+        # "Later", while missing the mistake that matters: a rule-driving option
+        # typed "Latter" leaves its rule silently never firing.
+        known = _known_options()
+        known_lc = {k.strip().lower() for k in known}
+        unknown = [(fid, name, o) for fid, name, opts in selects
+                   for o in opts if o.strip().lower() not in known_lc]
+        for fid, name, opt in unknown:
+            _emit(f"    NOTE: {name!r} ({fid}) offers {opt!r}, which is not a known choice.")
+            _emit(f"          Known: {', '.join(known)}.")
+            _emit("          Likely a typo — a rule keyed on it would silently never fire. "
+                  "If deliberate, add it to KNOWN_ITEM_OPTIONS.")
+            _emit()
 
         if not selects:
             _emit("    ERROR: nothing on this tab is required, so the card is released "
@@ -459,6 +462,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         sat_lc = {v.strip().lower() for v in satisfying}
         opts_lc = {o.strip().lower() for o in all_options}
         unmatched = [v for v in satisfying if v.strip().lower() not in opts_lc]
+        _emit()
         _emit(f"  satisfying values: {satisfying}  (same for all workflows)")
 
         if unmatched:

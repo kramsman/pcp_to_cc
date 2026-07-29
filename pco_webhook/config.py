@@ -176,6 +176,15 @@ DEFAULT_SATISFYING_VALUES = ["Yes", "Not Needed"]
 # genuine completions, so a card completing on excused items is never silent.
 EXCUSED_VALUES = ["Not Needed"]
 
+# Every value an item dropdown is allowed to offer. Anything else is flagged by
+# the validator as a probable typo — including rule-driving values, where a
+# misspelling makes the rule silently never fire (an option typed "Latter" would
+# leave a rule keyed on "Later" doing nothing, with no error anywhere).
+#   Yes / Not Needed   satisfy the item — see DEFAULT_SATISFYING_VALUES
+#   Promised, Waiting  leave it outstanding
+#   Later, No          leave it outstanding and drive WF From Field rules
+KNOWN_ITEM_OPTIONS = ["Yes", "Not Needed", "Promised", "Waiting", "Later", "No"]
+
 ANYTIME_ITEM_WORKFLOWS = [
     {**w, "requires_person_fields": _as_list(w.get("requires_person_fields"))}
     for w in _rules.get("anytime_item_workflows", [])
