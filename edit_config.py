@@ -1,6 +1,5 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
-# todo: save prompt when anything changes
 
 import html
 import json
@@ -659,6 +658,7 @@ class RuleEditor(QWidget):
         # Snapshot so save can tell whether the anytime rules actually changed —
         # validating hits the PCP API several times and is only worth it then.
         self._anytime_on_open = json.dumps(data.get(ANYTIME_KEY, []), sort_keys=True)
+        self._saved_state = self._state()
         layout = QVBoxLayout(self)
         nb = QTabWidget()
         for tab in TABS:
@@ -679,6 +679,35 @@ class RuleEditor(QWidget):
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
         self._push_process = None
+        self._close_after_save = False
+
+    def _state(self) -> str:
+        """Comparable snapshot of every rule set.
+
+        sort_keys because RuleDialog rebuilds each rule dict on edit, so key
+        order changes even when nothing the user cares about did.
+        """
+        return json.dumps(self.rules, sort_keys=True)
+
+    def closeEvent(self, event):
+        """Warn before discarding edits. Covers the Close button and the window's
+        red X, since both route through here."""
+        if self._state() == self._saved_state:
+            return event.accept()
+        choice = QMessageBox.question(
+            self, "Unsaved changes",
+            "Rules have been changed but not saved.\n\nSave before closing?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if choice == QMessageBox.Discard:
+            return event.accept()
+        if choice == QMessageBox.Cancel:
+            return event.ignore()
+        # Save: _save() returns while set-env-vars.sh is still running, so the
+        # close has to wait for _on_env_push_finished or the push is orphaned.
+        event.ignore()
+        self._close_after_save = True
+        self._save()
 
     def _save(self):
         with open(RULES_FILE) as f:
@@ -745,8 +774,14 @@ class RuleEditor(QWidget):
             QMessageBox.information(self, "Saved",
                 "Rules saved to rules.json and pushed live to Cloud Run.\n"
                 "(Code changes still require running deploy.sh separately.)")
+            self._saved_state = self._state()   # a plain Save also clears "dirty"
             self._validate_anytime_rules()
+            if self._close_after_save:
+                self._close_after_save = False
+                self.close()
         else:
+            # Stay open — closing on top of this dialog would hide it.
+            self._close_after_save = False
             QMessageBox.warning(self, "Push failed",
                 "Rules were saved to rules.json, but pushing them to Cloud Run failed:\n\n"
                 f"{output}\n\nClick Save to retry, or run ./set-env-vars.sh manually.")
