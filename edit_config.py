@@ -73,21 +73,30 @@ TABS = [
                          "the workflow (it's an AND condition). Use this when the field "
                          "gets set automatically on workflow entry, since PCO's change notification can "
                          "arrive before the value is saved. "
-                         "Optionally, 'Remove from' pulls them from an earlier workflow.",
+                         "'Match' decides how 'Field Value' is compared: 'contains' finds it anywhere, so "
+                         "'membership' matches a long free-text answer; 'whole word' only matches whole "
+                         "words, so 'No' will not match 'Not attending'; 'exact' means the value and "
+                         "nothing else. "
+                         "Optionally, 'Remove from' pulls them from an earlier workflow — and 'Assign to' "
+                         "may be left as (none) to only remove, e.g. an RSVP of 'No'.",
         "key":           "pcp_workflow_rules",
         "cols":          ["description", "trigger_workflow_id", "pcp_field_id", "pcp_value",
-                          "workflow_id", "displaces_workflow_id"],
+                          "match", "workflow_id", "displaces_workflow_id"],
         "labels":        {
             "description":           "Description",
             "pcp_field_id":          "Field ID",
-            "pcp_value":             "Field Contains String",
-            "workflow_id":           "Assign to WF ID",
+            "pcp_value":             "Field Value",
+            "match":                 "Match",
+            "workflow_id":           "Assign to WF ID (optional)",
             "trigger_workflow_id":   "Trigger when entering WF ID (optional)",
             "displaces_workflow_id": "Remove from WF ID (optional)",
         },
-        "widths":        [300, 110, 110, 150, 175, 150],
+        "widths":        [280, 110, 110, 140, 110, 165, 150],
         "trigger_field": None,
-        "optional_cols": ["trigger_workflow_id", "displaces_workflow_id"],
+        "choice_cols":   {"match": ["contains", "whole word", "exact"]},
+        # workflow_id is optional so a rule can only REMOVE — e.g. an RSVP of
+        # "No" takes someone off a workflow without pretending they completed it.
+        "optional_cols": ["trigger_workflow_id", "workflow_id", "displaces_workflow_id"],
     },
     {
         "title":         "Chain WFs",
@@ -181,15 +190,17 @@ TABS = [
                          "profile fields. Example: when a person's 'Member Stage' field contains "
                          "'Member', add them to the 'Members' email list in Constant Contact.",
         "key":           "cc_list_rules",
-        "cols":          ["description", "pcp_field_id", "pcp_value", "cc_list_id"],
+        "cols":          ["description", "pcp_field_id", "pcp_value", "match", "cc_list_id"],
         "labels":        {
             "description":  "Description",
             "pcp_field_id": "PCP Field ID",
             "pcp_value":    "Field Value",
+            "match":        "Match",
             "cc_list_id":   "CC List UUID",
         },
-        "widths":        [350, 125, 125, 375],
+        "widths":        [330, 120, 120, 110, 330],
         "trigger_field": None,
+        "choice_cols":   {"match": ["contains", "whole word", "exact"]},
     },
 ]
 
@@ -446,6 +457,12 @@ class RuleDialog(QDialog):
                     widget.insertItem(0, f"⚠ Unknown: {resolve_name(existing_id)}", existing_id)
                     widget.setCurrentIndex(0)
                 self._id_dropdown_cols.add(col)
+            elif col in tab.get("choice_cols", {}):
+                # Fixed set of values, not an API lookup.
+                choices = tab["choice_cols"][col]
+                widget = QComboBox()
+                widget.addItems(choices)
+                widget.setCurrentText(initial.get(col) or choices[0])
             elif col == tab.get("trigger_field"):
                 widget = QComboBox()
                 widget.addItems(["entered", "completed"])

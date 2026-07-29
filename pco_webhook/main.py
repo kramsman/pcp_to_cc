@@ -639,6 +639,33 @@ def parse_person(pcp_api_response: dict) -> dict:
 
 # ─── Rule matching ────────────────────────────────────────────────────────────
 
+def value_matches(wanted: str, actual: str, rule: dict | None = None) -> bool:
+    """Does a field's value satisfy a rule's search string?
+
+    The rule's optional `match` setting picks how:
+
+      contains    (default) substring, anywhere. "membership" finds it inside a
+                  long free-text answer. Also matches "No" inside "Not attending".
+      whole word  substring, but only on word boundaries. "No" matches "No" and
+                  "No way", never "None" or "Not attending".
+      exact       the whole value and nothing else.
+
+    Default is `contains` so every rule written before this existed behaves
+    exactly as it did.
+    """
+    mode = str((rule or {}).get("match", "") or "contains").strip().lower()
+    w, a = wanted.strip().lower(), actual.strip().lower()
+    if not w:
+        return False
+    if mode.startswith("exact"):
+        return a == w
+    if mode.startswith("whole"):
+        # Pad both sides so the boundary test needs no regex escaping of the
+        # user's search string, which may contain anything.
+        return f" {w} " in f" {a} "
+    return w in a
+
+
 def apply_rules(person: dict) -> list[str]:
     """
     Walk CC_LIST_RULES (from config.py) and return the deduplicated union of
@@ -646,7 +673,8 @@ def apply_rules(person: dict) -> list[str]:
 
     A rule matches when:
       - config.PCP_FIELD_IDS has an ID for the rule's pcp_field, AND
-      - person["custom_fields"][that_id] == rule["pcp_value"]
+      - person["custom_fields"][that_id] matches rule["pcp_value"] per the
+        rule's `match` setting — see value_matches().
     """
     matched: set[str] = set()
     custom_fields = person.get("custom_fields", {})
@@ -655,7 +683,7 @@ def apply_rules(person: dict) -> list[str]:
         field_id      = rule["pcp_field_id"]
         actual_values = custom_fields.get(str(field_id), [])
         pcp_value     = rule["pcp_value"]
-        if pcp_value and any(pcp_value.lower() in v.lower() for v in actual_values):
+        if pcp_value and any(value_matches(pcp_value, v, rule) for v in actual_values):
             valid_list_ids = [lid for lid in rule["cc_lists"] if lid]
             matched.update(valid_list_ids)
             logger.info(f"Rule matched: '{rule['description']}' → {valid_list_ids}")
@@ -682,10 +710,15 @@ def apply_workflow_rules(person: dict, trigger_workflow_id: str) -> list[dict]:
         field_id      = rule["pcp_field_id"]
         actual_values = custom_fields.get(str(field_id), [])
         pcp_value     = rule["pcp_value"]
-        if pcp_value and any(pcp_value.lower() in v.lower() for v in actual_values):
-            if rule.get("workflow_id"):
+        if pcp_value and any(value_matches(pcp_value, v, rule) for v in actual_values):
+            # A rule may add, remove, or both. Remove-only is how a declining
+            # answer ("RSVP: No") takes someone off a workflow without pretending
+            # they completed it.
+            if rule.get("workflow_id") or rule.get("displaces_workflow_id"):
                 matched.append(rule)
-                logger.info(f"PCP workflow rule matched: '{rule['description']}' → workflow {rule['workflow_id']}")
+                logger.info(f"PCP workflow rule matched: '{rule['description']}' → "
+                            f"add={rule.get('workflow_id') or '-'} "
+                            f"remove={rule.get('displaces_workflow_id') or '-'}")
         else:
             logger.info(f"PCP workflow rule not matched: '{rule['description']}' (field_id={field_id}, got {actual_values}, want '{pcp_value}')")
 
@@ -1698,12 +1731,13 @@ def _handle_webhook_post():
                 person = parse_person(pcp_data)
                 for rule in apply_workflow_rules(person, trigger_workflow_id=workflow_id):
                     matched = True
-                    add_to_workflow(person_id, rule["workflow_id"],
-                                     reason=f"Added by automation rule: {rule['description']}")
+                    if rule.get("workflow_id"):
+                        add_to_workflow(person_id, rule["workflow_id"],
+                                         reason=f"Added by automation rule: {rule['description']}")
                     if rule.get("displaces_workflow_id"):
                         complete_workflow_for_person(
                             person_id, rule["displaces_workflow_id"],
-                            reason=f"Replaced by automation rule: {rule['description']}",
+                            reason=f"Removed by automation rule: {rule['description']}",
                         )
                     logger.info(f"PCP workflow override applied: '{rule['description']}'")
 
@@ -1737,17 +1771,21 @@ def _handle_webhook_post():
             if rule["pcp_field_id"] != field_id:
                 continue
             pcp_value = rule["pcp_value"]
-            if pcp_value and pcp_value.lower() in value.lower():
+            if pcp_value and value_matches(pcp_value, value, rule):
                 matched = True
-                add_to_workflow(person_id, rule["workflow_id"],
-                                 reason=f"Added by automation rule: {rule['description']}")
+                # Adding is optional: a rule that only removes is how a declining
+                # answer takes someone off a workflow without completing it.
+                if rule.get("workflow_id"):
+                    add_to_workflow(person_id, rule["workflow_id"],
+                                     reason=f"Added by automation rule: {rule['description']}")
                 if rule.get("displaces_workflow_id"):
                     complete_workflow_for_person(
                         person_id, rule["displaces_workflow_id"],
-                        reason=f"Replaced by automation rule: {rule['description']}",
+                        reason=f"Removed by automation rule: {rule['description']}",
                     )
                 logger.info(f"Field datum rule applied: '{rule['description']}'  "
-                            f"person {person_id} → workflow {rule['workflow_id']}")
+                            f"person {person_id}  add={rule.get('workflow_id') or '-'}  "
+                            f"remove={rule.get('displaces_workflow_id') or '-'}")
             else:
                 logger.info(f"Field datum rule not matched: '{rule['description']}' "
                             f"(field_id={field_id}, value={value!r}, want '{pcp_value}')")

@@ -189,7 +189,8 @@ def anytime_workflows_for_tab(tab_id: str) -> list[dict]:
 # Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # pcp_field_id: PCP field definition ID — from find_pcp_ids.py
-# pcp_value:    field value that triggers the rule (case-sensitive)
+# pcp_value:    field value that triggers the rule
+# match:        contains (default) | whole word | exact — see value_matches()
 # cc_list_id:   Constant Contact list UUID (find via pco_utils.py → Rpt 'PCO and CC Field Ids')
 
 CC_LIST_RULES = [
