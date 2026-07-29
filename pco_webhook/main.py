@@ -1233,23 +1233,28 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
         except requests.RequestException as e:
             logger.warning(f"reevaluate_gates_for_field: card lookup failed for {person_id}: {e}")
             continue
+        name = next((i["name"] for i in _gate_items(cfg, auth)
+                      if i["id"] == str(field_definition_id)), str(field_definition_id))
         for card in cards:
             if excused:
-                name = next((i["name"] for i in _gate_items(cfg, auth)
-                             if i["id"] == str(field_definition_id)), field_definition_id)
                 _add_card_note(workflow_id, card["id"],
                                f"{name} marked {value!r} — excused, not completed "
                                f"({datetime.now().strftime('%d %b %Y')}).", auth)
             step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
-            results.append(evaluate_gate(person_id, workflow_id, card["id"], step))
+            trigger = f"{name} set to {value!r}" if value else f"{name} cleared"
+            results.append(evaluate_gate(person_id, workflow_id, card["id"], step, trigger))
     return results
 
 
-def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_id: str) -> str:
+def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_id: str,
+                  trigger: str = "") -> str:
     """Promote a card sitting on its gate step once every anytime item is satisfied.
 
     Returns a short status string for logging/response. No-op for workflows with
     no anytime config, and for cards not currently on the gate step.
+
+    `trigger` describes what prompted this run — "'>>_Rsvp' set to 'Yes'" or
+    "card arrived at the holding step" — and leads the note it writes.
     """
     cfg = config.anytime_workflow(workflow_id)
     if not cfg:
@@ -1271,9 +1276,14 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
         f"satisfied={[i['name'] for i in satisfied]} outstanding={names}"
     )
 
+    # Lead with what just happened, so each note is a distinct event rather than
+    # the same status restated — a card can sit here through many field edits.
+    lead = f"{trigger} — " if trigger else ""
+    done = ", ".join(i["name"] for i in satisfied) or "nothing yet"
+
     if outstanding:
-        note = "Outstanding before this workflow can complete: " + ", ".join(names)
-        _add_card_note(workflow_id, card_id, note, auth)
+        _add_card_note(workflow_id, card_id,
+                       f"{lead}still needed: {', '.join(names)}.  Done: {done}.", auth)
         return f"parked ({len(outstanding)} outstanding)"
 
     if config.TEST_MODE:
@@ -1285,6 +1295,10 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
             auth=auth, timeout=10,
         )
         r.raise_for_status()
+        # Only after the promote succeeds — a note claiming the card was released
+        # when it was not is worse than no note.
+        _add_card_note(workflow_id, card_id,
+                       f"{lead}all items complete, card released.  Done: {done}.", auth)
         logger.info(f"evaluate_gate: promoted card {card_id} past gate  HTTP {r.status_code}")
         return "promoted"
     except requests.RequestException as e:
@@ -1687,7 +1701,9 @@ def _handle_webhook_post():
                 and event.stage != "completed"
                 and person_id
                 and config.anytime_workflow(workflow_id)):
-            result = evaluate_gate(person_id, workflow_id, event.card_id, event.current_step_id)
+            result = evaluate_gate(person_id, workflow_id, event.card_id,
+                                   event.current_step_id,
+                                   trigger="Card arrived at the holding step")
             if result != "not-on-gate":
                 return jsonify({"status": "ok", "event": event_name,
                                 "gate": result, "person_id": person_id}), 200

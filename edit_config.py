@@ -1,7 +1,6 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
-# todo: add cc lists to find id report as are shown in edit_config cc dropdown
-# todo: prefix custom variable names with tab (screen name) to pinpoint and differentiate same names
+# todo: save prompt when anything changes
 
 import html
 import json
@@ -137,29 +136,34 @@ TABS = [
     },
     {
         "title":         "Anytime WF Items",
-        "description":   "Lets a workflow require items that can be done at ANY time, which PCO cannot do on its "
-                         "own because its steps are strictly sequential. Example: a retreat runs forms → payment → "
-                         "arrange a ride, but 'buy a shirt' can happen whenever. Add a 'Outstanding items' step near "
-                         "the end of the workflow and name it below as the Holding Step; the card is held there "
-                         "until every item is done, then released automatically. "
-                         "The items are the DROPDOWN fields on that tab whose name starts with the prefix below, "
-                         "e.g. '>>_RSVP'. Add such a dropdown in PCO and it becomes a required item with no change "
-                         "here and no redeploy — and the prefix shows staff, on a person's profile, which fields are "
-                         "required. Leave the prefix blank to treat EVERY dropdown on the tab as required. "
-                         "Text and paragraph fields are always ignored, so notes and bios can live there "
-                         "safely. 'Satisfying values' are the dropdown choices that count as finished (default "
-                         "Done, Not needed, Waived) — anything else, such as 'Promised', leaves the item outstanding. "
-                         "Fields on the tab are cleared when someone re-enters the workflow so next year starts "
-                         "clean; put anything that should carry over year to year on a DIFFERENT tab and list its "
-                         "IDs under 'Durable field IDs'. "
-                         "See who still owes what at /readiness/<workflow id>.",
+        "description":   "Lets a workflow require items that can be done at ANY time, which PCO cannot do on "
+                         "its own because its steps are strictly sequential. Example: 'buy a shirt' can happen whenever.\n"
+                         "\n"
+                         "SET UP IN PCO FIRST: (1) a tab/screen holding the item fields; (2) each item as a "
+                         "field named '>>_Something', e.g. '>>_RSVP', with the choices 'Yes' and 'Not Needed' "
+                         "— can use 'Clone PCO Fields' utility so every item gets the same choices; (3) a 'Holding "
+                         "Step' near the end of the workflow, e.g. 'Outstanding Items', plus one more step after it.\n"
+                         "\n"
+                         "THEN FILL IN BELOW. The card is held at the Holding Step until every item is done, "
+                         "then released automatically.\n"
+                         "\n"
+                         "WHAT COUNTS: only dropdowns whose name starts with '>>_'. Text and paragraph fields "
+                         "are ignored. An item is done when "
+                         "it is set to 'Yes' or 'Not Needed' — anything else, such as 'Waiting' or 'Promised', "
+                         "leaves it outstanding. 'Not Needed' is the escape hatch when an item turns out not to "
+                         "apply; it lets the card finish and is noted on the card and counted separately on the "
+                         "report.\n"
+                         "\n"
+                         "CHECK IT: run 'Chk WF Anytime-Items' after any change here, to a dropdown's choices, "
+                         "or to the workflow's steps — mistakes here are silent, and cards simply stop moving. "
+                         "See who still owes what with 'Rpt WF Anytime-Items'.",
         "key":           "anytime_item_workflows",
         "cols":          ["description", "workflow_id", "field_tab_id", "gate_step_id",
                           "requires_person_fields", "notes_field_id"],
         "labels":        {
             "description":            "Description",
             "workflow_id":            "Workflow ID",
-            "field_tab_id":           "Items Tab (dropdowns on it are the items)",
+            "field_tab_id":           "Items Tab/Screen (holds the >>_ fields)",
             "gate_step_id":           "Holding Step ID",
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",

@@ -49,6 +49,11 @@ from google.cloud import secretmanager  # noqa: E402
 
 load_dotenv()
 
+# pco_webhook.config logs when first imported, which happens partway through
+# building the report and drops INFO lines into the middle of it.
+from loguru import logger  # noqa: E402
+logger.remove()
+
 PCP_API_BASE = "https://api.planningcenteronline.com/people/v2"
 HEADERS = {"User-Agent": "pco_webhook (office2@4thu.org)"}
 OUTFILE = Path(__file__).parent / "wf_anytimeitems_validate.html"
@@ -279,6 +284,41 @@ def probe_send_email(auth: tuple, workflow: str, card: str) -> None:
 
 # ── Probe 5: validate configured anytime rules ───────────────────────────────
 
+STEP_MARKER = "--- required items (updated automatically) ---"
+
+
+def update_holding_step(rule: dict, item_names: list, auth: tuple) -> str:
+    """Append the current item list to the holding step's description.
+
+    Anything the user wrote above STEP_MARKER is preserved; only the block below
+    it is replaced. Returns a short status for the report — this edits the live
+    workflow, so it must never happen silently.
+    """
+    wf, step = str(rule.get("workflow_id", "")), str(rule.get("gate_step_id", ""))
+    if not (wf and step):
+        return "skipped — no holding step configured"
+
+    body = _get(f"workflows/{wf}/steps/{step}", auth).get("data", {})
+    current = (body.get("attributes", {}) or {}).get("description") or ""
+    kept = current.split(STEP_MARKER)[0].rstrip()
+
+    listing = ", ".join(item_names) if item_names else "(none — nothing is required)"
+    wanted = f"{kept}\n\n{STEP_MARKER}\n{listing}" if kept else f"{STEP_MARKER}\n{listing}"
+
+    if wanted.strip() == current.strip():
+        return "unchanged — already lists these items"
+    try:
+        r = requests.patch(
+            f"{PCP_API_BASE}/workflows/{wf}/steps/{step}",
+            json={"data": {"type": "WorkflowStep", "id": step,
+                           "attributes": {"description": wanted}}},
+            auth=auth, headers=HEADERS, timeout=15)
+        r.raise_for_status()
+        return f"rewritten to list: {listing}"
+    except requests.RequestException as e:
+        return f"FAILED to update ({e})"
+
+
 def _satisfying_values() -> list:
     """The org-wide satisfying values, from pco_webhook/config.py."""
     try:
@@ -361,7 +401,8 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         by_id = {i["id"]: i["attributes"]["value"]
                  for i in body.get("included", []) if i.get("type") == "FieldOption"}
         prefix = _item_prefix()
-        _emit(f"  item name prefix: {prefix!r}  (from DEFAULT_ITEM_PREFIX)")
+        _emit(f"  Default item prefix being used: {prefix}")
+        _emit()
 
         selects, ignored, unmarked, mismarked, all_options = [], [], [], [], set()
         for f in body.get("data", []):
@@ -433,6 +474,12 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         opts_lc = {o.strip().lower() for o in all_options}
         unmatched = [v for v in satisfying if v.strip().lower() not in opts_lc]
         _emit(f"  satisfying values: {satisfying}  (fixed for all workflows)")
+
+        # Keep the holding step telling staff which fields it checks. Done here
+        # because this is the documented thing to run after any change, and PCP
+        # has no event for "the fields on a tab changed".
+        _emit(f"  holding step description: "
+              f"{update_holding_step(rule, [n for _, n, _ in selects], auth)}")
         if unmatched:
             _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
                   f"intentional (e.g. spelling variants), but a typo here means the "
