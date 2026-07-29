@@ -1134,19 +1134,17 @@ def satisfies(value: str, satisfying_values) -> bool:
 def _gate_items(cfg: dict, auth) -> list[dict]:
     """Return the fields that actually gate the workflow.
 
-    An item must always be a `select` (dropdown), because a text field's prose can
-    never equal a satisfying value and would park every card forever. Which
-    dropdowns count depends on whether the rule sets `item_prefix`:
+    An item is a `select` (dropdown) on the tab whose NAME starts with
+    config.DEFAULT_ITEM_PREFIX. It must be a dropdown because a text field's prose
+    can never equal a satisfying value and would park every card forever.
 
-      prefix set   — only dropdowns whose NAME starts with it, e.g. ">>_RSVP".
-                     Lets non-item dropdowns live on the same tab, and shows staff
-                     on a person's profile which fields are required.
-      prefix empty — every dropdown on the tab. The original behaviour, kept so a
-                     rule written before the prefix existed keeps working.
+    The prefix is one org-wide constant rather than per-rule config: there is only
+    ever one answer, and a rule able to set it blank would silently promote every
+    dropdown on the tab to a required item.
 
     Durable prerequisites named by requires_person_fields are appended.
     """
-    prefix = str(cfg.get("item_prefix", "")).strip()
+    prefix = config.DEFAULT_ITEM_PREFIX
     items = [f for f in _tab_field_definitions(cfg["field_tab_id"], auth)
              if f["data_type"] == "select"
              and (not prefix or f["name"].startswith(prefix))]
@@ -1171,7 +1169,7 @@ def outstanding_items(person: dict, cfg: dict, auth) -> tuple[list[dict], list[d
     outstanding, which is the conservative direction: the card parks rather than
     completing on a value nobody intended to mean "done".
     """
-    satisfying = set(cfg.get("satisfying_values", ["Done", "Not needed", "Waived"]))
+    satisfying = config.DEFAULT_SATISFYING_VALUES
     custom_fields = person.get("custom_fields", {})
     satisfied, outstanding = [], []
     for item in _gate_items(cfg, auth):
@@ -1211,16 +1209,22 @@ def workflows_for_field(field_definition_id: str, auth) -> list[dict]:
     return hits
 
 
-def reevaluate_gates_for_field(person_id: str, field_definition_id: str) -> list[str]:
+def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
+                               value: str = "") -> list[str]:
     """Re-run the gate for every workflow this person is in that the field affects.
 
     This is what makes an item genuinely "anytime": satisfying it while the card
     is still on an early sequential step records the value and does nothing, and
     satisfying it while the card waits on the gate releases the card immediately.
+
+    An item excused with an EXCUSED value also gets a note on the card. Otherwise a
+    card can complete with work never done and nothing anywhere records that it
+    was waived, or when.
     """
     if not config.ANYTIME_ITEM_WORKFLOWS:
         return []
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    excused = bool(value) and satisfies(value, config.EXCUSED_VALUES)
     results = []
     for cfg in workflows_for_field(field_definition_id, auth):
         workflow_id = cfg["workflow_id"]
@@ -1230,6 +1234,12 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str) -> list
             logger.warning(f"reevaluate_gates_for_field: card lookup failed for {person_id}: {e}")
             continue
         for card in cards:
+            if excused:
+                name = next((i["name"] for i in _gate_items(cfg, auth)
+                             if i["id"] == str(field_definition_id)), field_definition_id)
+                _add_card_note(workflow_id, card["id"],
+                               f"{name} marked {value!r} — excused, not completed "
+                               f"({datetime.now().strftime('%d %b %Y')}).", auth)
             step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
             results.append(evaluate_gate(person_id, workflow_id, card["id"], step))
     return results
@@ -1411,9 +1421,9 @@ def build_readiness(workflow_id: str) -> dict:
             except requests.RequestException as e:
                 logger.warning(f"build_readiness: could not fetch person {pid}: {e}")
 
-    satisfying = set(cfg.get("satisfying_values", ["Done", "Not needed", "Waived"]))
-    exempt = {"Not needed", "Waived"}
-    rows, per_item = [], {i["id"]: {"outstanding": 0, "exempt": 0} for i in items}
+    satisfying = config.DEFAULT_SATISFYING_VALUES
+    excused_vals = config.EXCUSED_VALUES
+    rows, per_item = [], {i["id"]: {"outstanding": 0, "excused": 0} for i in items}
 
     for pid, person in people.items():
         custom = person.get("custom_fields", {})
@@ -1425,10 +1435,10 @@ def build_readiness(workflow_id: str) -> dict:
             if not done:
                 missing += 1
                 per_item[item["id"]]["outstanding"] += 1
-            elif satisfies(value, exempt):
-                per_item[item["id"]]["exempt"] += 1
+            elif satisfies(value, excused_vals):
+                per_item[item["id"]]["excused"] += 1
             cells.append({"value": value, "done": done,
-                          "exempt": done and value in exempt})
+                          "excused": done and satisfies(value, excused_vals)})
         rows.append({
             "name":    f"{person.get('first_name','')} {person.get('last_name','')}".strip(),
             "email":   person.get("email", ""),
@@ -1468,8 +1478,8 @@ def render_readiness_html(data: dict) -> str:
     for r in rows:
         cells = []
         for c in r["cells"]:
-            if c["exempt"]:
-                cls, text = "exempt", c["value"]
+            if c["excused"]:
+                cls, text = "excused", c["value"]
             elif c["done"]:
                 cls, text = "done", c["value"] or "Done"
             else:
@@ -1488,8 +1498,8 @@ def render_readiness_html(data: dict) -> str:
     summary = "  ".join(
         f'<span class="pill">{esc(i["name"])}: '
         f'{totals["per_item"][i["id"]]["outstanding"]} outstanding'
-        + (f' ({totals["per_item"][i["id"]]["exempt"]} not needed)'
-           if totals["per_item"][i["id"]]["exempt"] else "")
+        + (f' ({totals["per_item"][i["id"]]["excused"]} not needed)'
+           if totals["per_item"][i["id"]]["excused"] else "")
         + "</span>"
         for i in items
     )
@@ -1516,7 +1526,7 @@ def render_readiness_html(data: dict) -> str:
  .qt {{ opacity:.75; font-size:.9em; }}
  .todo {{ color:#b3261e; font-weight:600; }}
  .done {{ color:#1b6b3a; }}
- .exempt {{ opacity:.55; font-style:italic; }}
+ .excused {{ opacity:.55; font-style:italic; }}
  .miss {{ font-weight:700; text-align:center; }}
  tr.ready {{ opacity:.5; }}
  @media (prefers-color-scheme: dark) {{
@@ -1804,7 +1814,7 @@ def _handle_webhook_post():
         # already waiting on that workflow's gate, this releases it now; if the
         # card is still on an earlier sequential step, this is a no-op and the
         # value simply waits there until the card arrives.
-        gate_results = reevaluate_gates_for_field(person_id, field_id)
+        gate_results = reevaluate_gates_for_field(person_id, field_id, value)
         if gate_results:
             matched = True
             logger.info(f"Anytime gate re-evaluated for person {person_id} "

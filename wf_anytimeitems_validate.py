@@ -279,6 +279,26 @@ def probe_send_email(auth: tuple, workflow: str, card: str) -> None:
 
 # ── Probe 5: validate configured anytime rules ───────────────────────────────
 
+def _satisfying_values() -> list:
+    """The org-wide satisfying values, from pco_webhook/config.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "pco_webhook"))
+        from pco_webhook import config
+        return list(config.DEFAULT_SATISFYING_VALUES)
+    except Exception:
+        return ["Yes", "Not Needed"]
+
+
+def _item_prefix() -> str:
+    """The org-wide item prefix, from pco_webhook/config.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "pco_webhook"))
+        from pco_webhook import config
+        return config.DEFAULT_ITEM_PREFIX
+    except Exception:
+        return ">>_"
+
+
 def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
     """Check every anytime_item_workflows rule against live PCP. Read-only.
 
@@ -340,9 +360,8 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                     {"include": "field_options", "per_page": 100})
         by_id = {i["id"]: i["attributes"]["value"]
                  for i in body.get("included", []) if i.get("type") == "FieldOption"}
-        prefix = str(rule.get("item_prefix", "")).strip()
-        _emit(f"  item name prefix: {prefix!r}" if prefix else
-              "  item name prefix: none set — EVERY dropdown on the tab is required")
+        prefix = _item_prefix()
+        _emit(f"  item name prefix: {prefix!r}  (from DEFAULT_ITEM_PREFIX)")
 
         selects, ignored, unmarked, mismarked, all_options = [], [], [], [], set()
         for f in body.get("data", []):
@@ -407,13 +426,13 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                   "immediately." + (f" No dropdown starts with {prefix!r}." if prefix else ""))
             problems += 1
 
-        satisfying = as_list(rule.get("satisfying_values"))
+        satisfying = _satisfying_values()
         # Compared case-insensitively, matching how the webhook decides —
         # see satisfies() in pco_webhook/main.py.
         sat_lc = {v.strip().lower() for v in satisfying}
         opts_lc = {o.strip().lower() for o in all_options}
         unmatched = [v for v in satisfying if v.strip().lower() not in opts_lc]
-        _emit(f"  satisfying values: {satisfying}")
+        _emit(f"  satisfying values: {satisfying}  (fixed for all workflows)")
         if unmatched:
             _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
                   f"intentional (e.g. spelling variants), but a typo here means the "

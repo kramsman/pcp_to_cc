@@ -162,10 +162,22 @@ def _as_list(value) -> list[str]:
 # behaviour of treating every dropdown on the tab as an item.
 DEFAULT_ITEM_PREFIX = ">>_"
 
+# The only values that let an item pass. One vocabulary for every workflow, so
+# there is nothing per-rule to get wrong. Edit here to change it everywhere.
+#   Yes         — done
+#   Not Needed  — does not apply to this person (staff escape hatch)
+# Any other dropdown option simply leaves the item outstanding: "Waiting",
+# "Promised", and values that exist only to drive rules such as "No"/"Later".
+DEFAULT_SATISFYING_VALUES = ["Yes", "Not Needed"]
+
+# The subset meaning a person was let off this item, rather than having done it.
+# A strict subset of DEFAULT_SATISFYING_VALUES — these already pass the gate, so
+# this only changes how reports present them: counted and styled apart from
+# genuine completions, so a card completing on excused items is never silent.
+EXCUSED_VALUES = ["Not Needed"]
+
 ANYTIME_ITEM_WORKFLOWS = [
-    {**w,
-     "satisfying_values": _as_list(w.get("satisfying_values")) or ["Done", "Not needed", "Waived"],
-     "requires_person_fields": _as_list(w.get("requires_person_fields"))}
+    {**w, "requires_person_fields": _as_list(w.get("requires_person_fields"))}
     for w in _rules.get("anytime_item_workflows", [])
 ]
 

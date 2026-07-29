@@ -124,7 +124,6 @@
       "workflow_id": "730471",
       "field_tab_id": "263604",
       "gate_step_id": "2096759",
-      "satisfying_values": "Done, Not Needed, Not needed",
       "requires_person_fields": "",
       "notes_field_id": ""
     },
@@ -133,8 +132,6 @@
       "workflow_id": "762970",
       "field_tab_id": "263885",
       "gate_step_id": "2099981",
-      "item_prefix": ">>_",
-      "satisfying_values": "Done, Not Needed, Later",
       "requires_person_fields": "",
       "notes_field_id": "1090792"
     }
