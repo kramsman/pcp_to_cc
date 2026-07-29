@@ -133,9 +133,11 @@ TABS = [
                          "arrange a ride, but 'buy a shirt' can happen whenever. Add a 'Outstanding items' step near "
                          "the end of the workflow and name it below as the Holding Step; the card is held there "
                          "until every item is done, then released automatically. "
-                         "The items themselves are the DROPDOWN fields on the tab you pick — add a new dropdown to "
-                         "that tab in PCO and it becomes a required item with no change here and no redeploy. "
-                         "Text and paragraph fields on the same tab are ignored, so notes and bios can live there "
+                         "The items are the DROPDOWN fields on that tab whose name starts with the prefix below, "
+                         "e.g. '>>_RSVP'. Add such a dropdown in PCO and it becomes a required item with no change "
+                         "here and no redeploy — and the prefix shows staff, on a person's profile, which fields are "
+                         "required. Leave the prefix blank to treat EVERY dropdown on the tab as required. "
+                         "Text and paragraph fields are always ignored, so notes and bios can live there "
                          "safely. 'Satisfying values' are the dropdown choices that count as finished (default "
                          "Done, Not needed, Waived) — anything else, such as 'Promised', leaves the item outstanding. "
                          "Fields on the tab are cleared when someone re-enters the workflow so next year starts "
@@ -144,12 +146,14 @@ TABS = [
                          "See who still owes what at /readiness/<workflow id>.",
         "key":           "anytime_item_workflows",
         "cols":          ["description", "workflow_id", "field_tab_id", "gate_step_id",
-                          "satisfying_values", "requires_person_fields", "notes_field_id"],
+                          "item_prefix", "satisfying_values", "requires_person_fields",
+                          "notes_field_id"],
         "labels":        {
             "description":            "Description",
             "workflow_id":            "Workflow ID",
             "field_tab_id":           "Items Tab (dropdowns on it are the items)",
             "gate_step_id":           "Holding Step ID",
+            "item_prefix":            "Item name prefix (e.g. >>_ ; blank = every dropdown)",
             "satisfying_values":      "Satisfying values (comma separated)",
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",
@@ -157,6 +161,7 @@ TABS = [
         "widths":        [260, 150, 200, 200, 200, 200, 160],
         "trigger_field": None,
         "optional_cols": ["requires_person_fields", "notes_field_id"],
+        # item_prefix is free text, not an ID lookup — no dropdown for it.
         # Choices that only exist once another field is chosen: a workflow's
         # steps, and the dropdown values used by the items on a tab.
         "dependent_cols": {

@@ -128,6 +128,10 @@ WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 #                         PCP links a tab to a workflow; this line is that link.
 #                         Discover with: python wf_anytimeitems_validate.py tabs
 # gate_step_id:           the "Outstanding items" step held until all items pass
+# item_prefix:            name prefix marking which dropdowns are items, e.g. ">>_"
+#                         for a field named ">>_RSVP". Lets non-item dropdowns share
+#                         the tab, and shows staff on a profile which are required.
+#                         Leave blank to treat EVERY dropdown on the tab as an item.
 # satisfying_values:      dropdown values that count as done — everything else,
 #                         including blank, leaves the item outstanding
 # requires_person_fields: durable field IDs on some OTHER tab, never cleared
@@ -152,6 +156,11 @@ def _as_list(value) -> list[str]:
         return [v.strip() for v in value.split(",") if v.strip()]
     return [str(v).strip() for v in value if str(v).strip()]
 
+
+# One prefix used across the org, so there is a single thing to learn and type.
+# A rule may still override it, and a blank rule prefix keeps the original
+# behaviour of treating every dropdown on the tab as an item.
+DEFAULT_ITEM_PREFIX = ">>_"
 
 ANYTIME_ITEM_WORKFLOWS = [
     {**w,

@@ -14,6 +14,10 @@ Menu items:
     Edit Rules
         Edit workflow and CC list rules via a GUI without touching Python code;
         changes save to rules.json (run deploy.sh to apply them to Cloud Run).
+    Clone PCO Fields
+        Copy a custom field, including its dropdown options, to any tab.
+        PCO has no duplicate-field function, so this saves retyping the same
+        options on every anytime item — and keeps them identical.
     Chk 'WF Anytime-Items'
         Check the Anytime WF Items rules against live PCP. They fail silently
         when wrong, so run after changing a rule, a dropdown's options, or a
@@ -75,6 +79,15 @@ TOOLS = {
         # editor's table stops receiving clicks — rules cannot be selected.
         # The parent has to be gone before the editor opens its window.
         "detach": True,
+    },
+    "Clone PCO Fields": {
+        "script": ROOT_PATH / "pco_clone_fields.py",
+        "description": (
+            "Copy a custom field, including its dropdown options, to any tab.\n"
+            "PCO has no duplicate-field function, so this saves retyping the\n"
+            "same options on every anytime item — and keeps them identical."
+        ),
+        "detach": False,
     },
     "Chk 'WF Anytime-Items'": {
         "script": ROOT_PATH / "wf_anytimeitems_validate.py",

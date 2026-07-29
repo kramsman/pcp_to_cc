@@ -29,6 +29,11 @@ from pathlib import Path
 os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
 
 from dotenv import load_dotenv  # noqa: E402
+from loguru import logger  # noqa: E402
+
+# pco_webhook.config and main log on import; this is a report, not the service,
+# so keep stdout to the report itself.
+logger.remove()
 
 _HERE = Path(__file__).parent
 load_dotenv(_HERE / ".env")

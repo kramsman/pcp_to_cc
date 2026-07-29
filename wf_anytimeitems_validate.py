@@ -340,28 +340,71 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                     {"include": "field_options", "per_page": 100})
         by_id = {i["id"]: i["attributes"]["value"]
                  for i in body.get("included", []) if i.get("type") == "FieldOption"}
-        selects, ignored, all_options = [], [], set()
+        prefix = str(rule.get("item_prefix", "")).strip()
+        _emit(f"  item name prefix: {prefix!r}" if prefix else
+              "  item name prefix: none set — EVERY dropdown on the tab is required")
+
+        selects, ignored, unmarked, mismarked, all_options = [], [], [], [], set()
         for f in body.get("data", []):
             if f["attributes"].get("deleted_at"):
                 continue
             name, dtype = f["attributes"].get("name", ""), f["attributes"].get("data_type")
-            if dtype == "select":
+            marked = bool(prefix) and name.startswith(prefix)
+            if dtype == "select" and (not prefix or marked):
                 opts = [by_id[r["id"]] for r in
                         (f.get("relationships", {}).get("field_options", {}).get("data") or [])
                         if r["id"] in by_id]
                 selects.append((f["id"], name, opts))
                 all_options.update(opts)
+            elif dtype == "select":
+                unmarked.append((f["id"], name))       # dropdown, but no prefix
+            elif marked:
+                mismarked.append((f["id"], name, dtype))  # marked, but not a dropdown
             else:
                 ignored.append((name, dtype))
 
-        _emit(f"  tab {tab}: {len(selects)} gating item(s), {len(ignored)} ignored")
+        _emit(f"  tab {tab}: {len(selects)} required item(s), {len(ignored)} ignored")
         for fid, name, opts in selects:
             _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
         for name, dtype in ignored:
             _emit(f"    data  {'':<10} {name:<34} ({dtype}) — not required")
+
+        # The prefix turns a silent mistake into a visible one. Without these
+        # two checks, a forgotten prefix means the item is never enforced and
+        # nothing anywhere says so.
+        for fid, name in unmarked:
+            _emit(f"    NOTE: dropdown {name!r} ({fid}) has no {prefix!r} prefix, so it is "
+                  f"NOT required. Rename it to '{prefix}{name}' if it should be.")
+        for fid, name, dtype in mismarked:
+            _emit(f"    ERROR: {name!r} ({fid}) starts with {prefix!r} but is a `{dtype}`, "
+                  f"not a dropdown. Its value can never match a satisfying value, so it is "
+                  f"being ignored. Make it a dropdown or remove the prefix.")
+            problems += 1
+
+        # Items built by hand drift apart — one ends up without "Promised", and
+        # nothing says so until someone looks for the missing choice.
+        if len(selects) > 1:
+            option_sets = {tuple(o) for _, _, o in selects}
+            if len(option_sets) > 1:
+                common = set.intersection(*(set(o) for _, _, o in selects))
+                _emit("    NOTE: these items do not all offer the same choices. Shared by "
+                      f"all: {sorted(common) if common else 'nothing'}.")
+                for fid, name, opts in selects:
+                    extra = sorted(set(opts) - common)
+                    missing = sorted(set().union(*(set(o) for _, _, o in selects)) - set(opts))
+                    if extra or missing:
+                        bits = []
+                        if missing:
+                            bits.append(f"missing {missing}")
+                        if extra:
+                            bits.append(f"only it has {extra}")
+                        _emit(f"          {name} ({fid}): " + ", ".join(bits))
+                _emit("          Clone from one template (Clone PCO Fields) to keep them "
+                      "identical.")
+
         if not selects:
-            _emit("    ERROR: no `select` fields on this tab, so nothing is required and the "
-                  "card is released immediately.")
+            _emit("    ERROR: nothing on this tab is required, so the card is released "
+                  "immediately." + (f" No dropdown starts with {prefix!r}." if prefix else ""))
             problems += 1
 
         satisfying = as_list(rule.get("satisfying_values"))

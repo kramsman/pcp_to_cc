@@ -1091,14 +1091,22 @@ def _workflow_steps(workflow_id: str, auth) -> dict[str, int]:
 def _gate_items(cfg: dict, auth) -> list[dict]:
     """Return the fields that actually gate the workflow.
 
-    Only `select` (dropdown) fields on the tab are items. text/paragraph/boolean
-    fields on the same tab are data — a tab like "Membership Ceremony 5-17-26"
-    holds both status dropdowns and content fields such as "Bio Text Edited",
-    and gating on someone's bio prose would park every card forever.
+    An item must always be a `select` (dropdown), because a text field's prose can
+    never equal a satisfying value and would park every card forever. Which
+    dropdowns count depends on whether the rule sets `item_prefix`:
+
+      prefix set   — only dropdowns whose NAME starts with it, e.g. ">>_RSVP".
+                     Lets non-item dropdowns live on the same tab, and shows staff
+                     on a person's profile which fields are required.
+      prefix empty — every dropdown on the tab. The original behaviour, kept so a
+                     rule written before the prefix existed keeps working.
+
     Durable prerequisites named by requires_person_fields are appended.
     """
+    prefix = str(cfg.get("item_prefix", "")).strip()
     items = [f for f in _tab_field_definitions(cfg["field_tab_id"], auth)
-             if f["data_type"] == "select"]
+             if f["data_type"] == "select"
+             and (not prefix or f["name"].startswith(prefix))]
     durable = set(str(x) for x in cfg.get("requires_person_fields", []))
     if durable:
         seen = {f["id"] for f in items}
