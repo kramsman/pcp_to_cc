@@ -98,6 +98,24 @@
       "workflow_id": "736375",
       "trigger_workflow_id": "",
       "displaces_workflow_id": ""
+    },
+    {
+      "description": "RSVP 'No' > remove from 'Ceremony'",
+      "trigger_workflow_id": "",
+      "pcp_field_id": "1090767",
+      "pcp_value": "no",
+      "match": "exact",
+      "workflow_id": "",
+      "displaces_workflow_id": "762970"
+    },
+    {
+      "description": "RSVP 'Later' > add to 'Future Ceremony' and remove from 'Ceremony'",
+      "trigger_workflow_id": "",
+      "pcp_field_id": "1090767",
+      "pcp_value": "later",
+      "match": "exact",
+      "workflow_id": "763097",
+      "displaces_workflow_id": "762970"
     }
   ],
   "anytime_item_workflows": [
@@ -109,6 +127,16 @@
       "satisfying_values": "Done, Not Needed, Not needed",
       "requires_person_fields": "",
       "notes_field_id": ""
+    },
+    {
+      "description": "test ceremony",
+      "workflow_id": "762970",
+      "field_tab_id": "263885",
+      "gate_step_id": "2099981",
+      "item_prefix": ">>_",
+      "satisfying_values": "Done, Not Needed, Later",
+      "requires_person_fields": "",
+      "notes_field_id": "1090792"
     }
   ],
   "cc_list_rules": [

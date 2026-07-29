@@ -338,6 +338,31 @@ DEPENDENT_FETCHERS = {
 }
 
 
+def _display(item: dict) -> str:
+    """Label for a picker or table cell: "Name · Tab (id)".
+
+    Field names are not unique across tabs — this org already has two 'Edited Bio'
+    and two 'Invited' — so the tab is what tells them apart.
+    """
+    label = item.get("name", "")
+    tab_id = str(item.get("tab_id", "") or "")
+    if tab_id:
+        tab = next((t["name"] for t in _api_cache.get("pcp_tab", [])
+                    if str(t["id"]) == tab_id), "")
+        if tab:
+            label = f"{label} · {tab}"
+    return f"{label} ({item['id']})"
+
+
+def cell_text(col: str, value: str) -> str:
+    """Render a stored value for display: an ID becomes "Name · Tab (id)"."""
+    api_key = DROPDOWN_FIELDS.get(col)
+    if not api_key or not value:
+        return value
+    item = next((i for i in _api_cache.get(api_key, []) if i["id"] == value), None)
+    return _display(item) if item else value
+
+
 def resolve_name(value: str) -> str:
     """Render an id as "1089420: 'Edited Bio'" when the name is known.
 
@@ -347,7 +372,7 @@ def resolve_name(value: str) -> str:
     for items in _api_cache.values():
         for item in items:
             if str(item.get("id")) == str(value):
-                return f"{value}: {item.get('name', '')!r}"
+                return _display(item)
     return str(value)
 
 
@@ -394,7 +419,8 @@ class MultiSelectList(QListWidget):
 
     @staticmethod
     def _label(item: dict) -> str:
-        return item["name"] if item["name"] == item["id"] else f"{item['name']} ({item['id']})"
+        # satisfying values are plain strings, where id == name
+        return item["name"] if item["name"] == item["id"] else _display(item)
 
     def _add(self, label: str, value: str, checked: bool) -> None:
         row = QListWidgetItem(label)
@@ -448,7 +474,7 @@ class RuleDialog(QDialog):
                 if col in optional_cols:
                     widget.addItem("(none)", "")
                 for item in items:
-                    widget.addItem(f"{item['name']} ({item['id']})", item["id"])
+                    widget.addItem(_display(item), item["id"])
                 existing_id = initial.get(col, "")
                 idx = next((i for i in range(widget.count()) if widget.itemData(i) == existing_id), -1)
                 if idx >= 0:
@@ -508,7 +534,7 @@ class RuleDialog(QDialog):
         widget.clear()
         widget.addItem("(none)", "")
         for item in items:
-            widget.addItem(f"{item['name']} ({item['id']})", item["id"])
+            widget.addItem(_display(item), item["id"])
         idx = next((i for i in range(widget.count()) if widget.itemData(i) == existing), -1)
         if idx >= 0:
             widget.setCurrentIndex(idx)
@@ -572,7 +598,8 @@ class TabWidget(QWidget):
             row = self.table.rowCount()
             self.table.insertRow(row)
             for ci, col in enumerate(self.tab["cols"]):
-                self.table.setItem(row, ci, QTableWidgetItem(rule.get(col, "")))
+                self.table.setItem(row, ci,
+                                   QTableWidgetItem(cell_text(col, rule.get(col, ""))))
 
     def _add(self):
         dlg = RuleDialog(self.tab, {}, self)
@@ -725,12 +752,7 @@ class RuleEditor(QWidget):
 
     def _cell_html(self, col: str, value: str) -> str:
         """Format one cell. ID columns are shown as 'Name (id)' when the name is known."""
-        api_key = DROPDOWN_FIELDS.get(col)
-        if not api_key or not value:
-            return html.escape(value)
-        name = next((item["name"] for item in _api_cache.get(api_key, [])
-                     if item["id"] == value), None)
-        return html.escape(f"{name} ({value})" if name else value)
+        return html.escape(cell_text(col, value))
 
     def _print_rules(self):
         """Write all rule tables to rules_report.html and open it in the browser."""
