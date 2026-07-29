@@ -37,7 +37,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_HERE, ".env"))
 sys.path.insert(0, _HERE)
 
-from find_pcp_ids import PCP_API_BASE, _get_secret  # noqa: E402
+# Deliberately NOT from find_pcp_ids: that imports uvbekutils, whose __init__
+# pulls in PySide6. Loading Qt turns this terminal script into a GUI app on
+# macOS, which steals focus so you cannot type at its own prompts. This module
+# imports bekgoogle lazily, only inside the re-auth branch, so no Qt is loaded.
+from wf_anytimeitems_validate import PCP_API_BASE, _get_secret  # noqa: E402
 
 HEADERS = {"User-Agent": "pco_webhook (office2@4thu.org)"}
 
@@ -247,7 +251,9 @@ def main() -> int:
                 by_name.add(name.lower())
                 by_slug.add(slugify(name))
 
-        if not yes("\nClone more from the same template?", default=True):
+        # Defaults to no: the name prompt above already loops, so Enter here
+        # should finish rather than ask again.
+        if not yes("\nClone more from the same template?", default=False):
             break
 
     print("\nDone.")

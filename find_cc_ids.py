@@ -26,7 +26,6 @@ import requests  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 from google.api_core import retry as api_retry  # noqa: E402
 from google.cloud import secretmanager  # noqa: E402
-from uvbekutils.pyautobek import confirm_with_file_link  # noqa: E402
 from bekgoogle import ensure_adc_auth  # noqa: E402
 
 load_dotenv()
@@ -168,6 +167,9 @@ def main():
         fh.write("\n".join(lines))
     print(f"\nSaved to: {out_path}")
 
+    # Imported here, not at module level: this pulls in PySide6, and other
+    # scripts import this module purely for its API helpers.
+    from uvbekutils.pyautobek import confirm_with_file_link
     confirm_with_file_link(
         "Contact lists written.",
         out_path,
