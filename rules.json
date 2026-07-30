@@ -116,6 +116,24 @@
       "match": "exact",
       "workflow_id": "763097",
       "displaces_workflow_id": "762970"
+    },
+    {
+      "description": "Remove 'Test Ceremony' if RSVP=No",
+      "trigger_workflow_id": "",
+      "pcp_field_id": "1090767",
+      "pcp_value": "no",
+      "match": "whole word",
+      "workflow_id": "",
+      "displaces_workflow_id": "762970"
+    },
+    {
+      "description": "Add to 'Next Ceremony' and remove from 'Test Ceremony' if RSVP='Later'",
+      "trigger_workflow_id": "",
+      "pcp_field_id": "1090767",
+      "pcp_value": "later",
+      "match": "whole word",
+      "workflow_id": "763097",
+      "displaces_workflow_id": "762970"
     }
   ],
   "anytime_item_workflows": [
