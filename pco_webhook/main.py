@@ -1224,9 +1224,21 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
     if not config.ANYTIME_ITEM_WORKFLOWS:
         return []
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    affected = workflows_for_field(field_definition_id, auth)
+    if not affected:
+        return []          # not an item field — no fetch, no work
+
+    # Fetched once, and only now that the field is known to matter: computing what
+    # is outstanding needs the person's other item values, but a field change on an
+    # unrelated field must not trigger a person fetch at all.
     excused = bool(value) and satisfies(value, config.EXCUSED_VALUES)
+    pcp_data = fetch_person_from_pcp(person_id)
+    if not pcp_data:
+        logger.warning(f"reevaluate_gates_for_field: could not fetch person {person_id}")
+        return []
+    person = parse_person(pcp_data)
     results = []
-    for cfg in workflows_for_field(field_definition_id, auth):
+    for cfg in affected:
         workflow_id = cfg["workflow_id"]
         try:
             cards = _active_cards_in_workflow(person_id, workflow_id, auth)
@@ -1241,13 +1253,61 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
                                f"{name} marked {value!r} — excused, not completed "
                                f"({datetime.now().strftime('%d %b %Y')}).", auth)
             step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
-            trigger = f"{name} set to {value!r}" if value else f"{name} cleared"
-            results.append(evaluate_gate(person_id, workflow_id, card["id"], step, trigger))
+            trigger = f"{name} set to {value!r}." if value else f"{name} cleared."
+            # Noted whatever step the card is on — status is useful from enrolment,
+            # not only once the card reaches the holding step. Skipped when the gate
+            # will release the card, since that writes its own note.
+            satisfied, outstanding = outstanding_items(person, cfg, auth)
+            if outstanding or step != str(cfg.get("gate_step_id", "")):
+                note_item_status(workflow_id, card["id"], satisfied, outstanding,
+                                 trigger, auth)
+            results.append(evaluate_gate(person_id, workflow_id, card["id"], step,
+                                         trigger, person))
     return results
 
 
+_pcp_name_cache: dict = {}
+
+
+def pcp_name(path: str, auth) -> str:
+    """Name of a PCP object by path, e.g. "workflows/762970". Cached, "" on error.
+
+    Notes and reports both need these; a card can be in more than one gated
+    workflow, so a note that does not say which workflow is ambiguous.
+    """
+    if path not in _pcp_name_cache:
+        try:
+            r = requests.get(f"{config.PCP_API_BASE}/{path}", auth=auth, timeout=10)
+            r.raise_for_status()
+            _pcp_name_cache[path] = r.json().get("data", {}).get("attributes", {}).get("name", "")
+        except requests.RequestException:
+            return ""          # not cached, so a transient failure can retry
+    return _pcp_name_cache[path]
+
+
+def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstanding: list,
+                     trigger: str, auth, released: bool = False) -> None:
+    """Record anytime-item status in the card history.
+
+    Called whatever step the card is on: staff need to know what is required from
+    enrolment, not only once the card reaches the holding step. Promotion is still
+    the gate's job.
+    """
+    wf = pcp_name(f"workflows/{workflow_id}", auth) or f"workflow {workflow_id}"
+    done = ", ".join(i["name"] for i in satisfied) or "nothing yet"
+    lead = f"{wf} — {trigger}" if trigger else f"{wf} —"
+    if released:
+        body = f"{lead}  All items complete, card released.  Done: {done}."
+    elif outstanding:
+        still = ", ".join(i["name"] for i in outstanding)
+        body = f"{lead}  Still needed: {still}.  Done: {done}."
+    else:
+        body = f"{lead}  All items complete.  Done: {done}."
+    _add_card_note(workflow_id, card_id, body, auth)
+
+
 def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_id: str,
-                  trigger: str = "") -> str:
+                  trigger: str = "", person: dict | None = None) -> str:
     """Promote a card sitting on its gate step once every anytime item is satisfied.
 
     Returns a short status string for logging/response. No-op for workflows with
@@ -1262,11 +1322,12 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
     if current_step_id != str(cfg.get("gate_step_id", "")):
         return "not-on-gate"
 
-    pcp_data = fetch_person_from_pcp(person_id)
-    if not pcp_data:
-        logger.warning(f"evaluate_gate: could not fetch person {person_id}")
-        return "person-fetch-failed"
-    person = parse_person(pcp_data)
+    if person is None:
+        pcp_data = fetch_person_from_pcp(person_id)
+        if not pcp_data:
+            logger.warning(f"evaluate_gate: could not fetch person {person_id}")
+            return "person-fetch-failed"
+        person = parse_person(pcp_data)
 
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
     satisfied, outstanding = outstanding_items(person, cfg, auth)
@@ -1276,14 +1337,9 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
         f"satisfied={[i['name'] for i in satisfied]} outstanding={names}"
     )
 
-    # Lead with what just happened, so each note is a distinct event rather than
-    # the same status restated — a card can sit here through many field edits.
-    lead = f"{trigger} — " if trigger else ""
-    done = ", ".join(i["name"] for i in satisfied) or "nothing yet"
-
     if outstanding:
-        _add_card_note(workflow_id, card_id,
-                       f"{lead}still needed: {', '.join(names)}.  Done: {done}.", auth)
+        # The note is written by the caller — note_item_status() — so a field
+        # change cannot produce two notes for one event.
         return f"parked ({len(outstanding)} outstanding)"
 
     if config.TEST_MODE:
@@ -1297,8 +1353,8 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
         r.raise_for_status()
         # Only after the promote succeeds — a note claiming the card was released
         # when it was not is worse than no note.
-        _add_card_note(workflow_id, card_id,
-                       f"{lead}all items complete, card released.  Done: {done}.", auth)
+        note_item_status(workflow_id, card_id, satisfied, outstanding, trigger, auth,
+                         released=True)
         logger.info(f"evaluate_gate: promoted card {card_id} past gate  HTTP {r.status_code}")
         return "promoted"
     except requests.RequestException as e:
@@ -1396,16 +1452,8 @@ def build_readiness(workflow_id: str) -> dict:
     notes_field = str(cfg.get("notes_field_id", "")) or None
 
     # Names for the header — an ID on its own tells the reader nothing.
-    def _name_of(path: str) -> str:
-        try:
-            r = requests.get(f"{config.PCP_API_BASE}/{path}", auth=auth, timeout=10)
-            r.raise_for_status()
-            return r.json().get("data", {}).get("attributes", {}).get("name", "")
-        except requests.RequestException:
-            return ""
-
-    workflow_name = _name_of(f"workflows/{workflow_id}")
-    tab_name = _name_of(f"tabs/{cfg['field_tab_id']}")
+    workflow_name = pcp_name(f"workflows/{workflow_id}", auth)
+    tab_name = pcp_name(f"tabs/{cfg['field_tab_id']}", auth)
 
     cards = requests.get(
         f"{config.PCP_API_BASE}/workflows/{workflow_id}/cards",
@@ -1755,6 +1803,21 @@ def _handle_webhook_post():
         if (event_name == "people.v2.events.workflow_card.created"
                 and config.anytime_workflow(workflow_id)):
             clear_consumable_items(person_id, workflow_id, event.card_id)
+            # Say what is required straight away. Without this, nothing appears in
+            # the card history until the card reaches the holding step, which may
+            # be weeks later.
+            try:
+                _cfg = config.anytime_workflow(workflow_id)
+                _auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+                _items = _gate_items(_cfg, _auth)
+                if _items:
+                    _wf = pcp_name(f"workflows/{workflow_id}", _auth) or f"workflow {workflow_id}"
+                    _add_card_note(
+                        workflow_id, event.card_id,
+                        f"{_wf} — required before this workflow can complete: "
+                        f"{', '.join(i['name'] for i in _items)}.", _auth)
+            except requests.RequestException as e:
+                logger.warning(f"could not note required items on card {event.card_id}: {e}")
             matched = True
 
         # PCP workflow override: on entry to a workflow, if a field-based

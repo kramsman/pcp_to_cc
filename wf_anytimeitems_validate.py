@@ -417,7 +417,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             else:
                 ignored.append((name, dtype))
 
-        _emit(f"  Field tab/screen {tab_name(tab, auth)!r} {tab} being used; "
+        _emit(f"  Associated fields in tab/screen {tab_name(tab, auth)!r} {tab}; "
               f"{len(selects)} required, {len(ignored)} ignored")
         for fid, name, opts in selects:
             _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
