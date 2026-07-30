@@ -369,29 +369,6 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             problems += 1
 
         steps = _get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", [])
-        gate = str(rule.get("gate_step_id", ""))
-        match = next((s for s in steps if s["id"] == gate), None)
-        if match:
-            # Rank among the sorted steps, not PCP's raw `sequence`: that is
-            # 0-based on some workflows and 1-based on others, so printing it
-            # gives "1 of 2" for the middle of three steps.
-            order = sorted(steps, key=lambda x: x["attributes"].get("sequence", 0))
-            pos = next(i for i, x in enumerate(order, 1) if x["id"] == gate)
-            total = len(order)
-            _emit(f"  holding step {gate}: {match['attributes'].get('name')!r} "
-                  f"at position {pos} of {total}")
-            if pos == total:
-                _emit("    WARNING: the holding step is the LAST step. A staff member skipping it "
-                      "completes the card outright, and recovery depends on go_back, which "
-                      "is unverified. Add a trailing 'Confirm & finish' step.")
-            if pos == 1:
-                _emit("    WARNING: the holding step is the FIRST step, so every card waits there "
-                      "immediately and the sequential steps never run.")
-        else:
-            _emit(f"  holding step {gate}: NOT FOUND in this workflow  <-- cards will never be released")
-            _emit(f"    steps that do exist: "
-                  f"{[(s['id'], s['attributes'].get('name')) for s in steps]}")
-            problems += 1
 
         body = _get(f"tabs/{tab}/field_definitions", auth,
                     {"include": "field_options", "per_page": 100})
@@ -400,10 +377,16 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         # An item names the step it gates, so the step list is what item names are
         # checked against. Two steps sharing a name make "get bio!Raw Bio"
         # ambiguous; the card would park at one and sail through the other.
+        # Ranked by position among the sorted steps, not PCP's raw `sequence`:
+        # that is 0-based on some workflows and 1-based on others.
         ordered = sorted(steps, key=lambda x: x["attributes"].get("sequence", 0))
         step_names = [s["attributes"].get("name", "") for s in ordered]
         step_lc = {n.strip().lower() for n in step_names}
         last_step = step_names[-1] if step_names else ""
+
+        _emit(f"  Steps ({len(ordered)}) — an item gates the step it names:")
+        for i, s in enumerate(ordered, 1):
+            _emit(f"    {i}. {s['id']:<10} {s['attributes'].get('name', '')!r}")
 
         seen_lc = set()
         for n in step_names:
@@ -709,11 +692,97 @@ def reorder_items_tab(auth: tuple, apply: bool = False) -> int:
     return 0
 
 
+_MANIFEST_MARKER = "--- anytime items (managed automatically) ---"
+
+
+def describe_steps(auth: tuple, apply: bool = False) -> int:
+    """Write each workflow's anytime-item manifest into every step's description.
+
+    With gates spread across several steps, no single step shows the whole
+    picture, and staff are inside a card when they need it. Every step therefore
+    carries the full list, with the items gating THAT step marked ">>".
+
+    Only the block below _MANIFEST_MARKER is managed. Anything a human wrote
+    above it is preserved — a step description is a place staff put instructions,
+    and silently destroying them to make room for this would be a poor trade.
+
+    Read-only unless `apply`.
+    """
+    _emit("=" * 78)
+    _emit("Write anytime-item manifest into step descriptions"
+          + ("" if apply else "  (DRY RUN)"))
+    _emit("=" * 78)
+
+    rules = json.loads((Path(__file__).parent / "rules.json").read_text()) \
+        .get("anytime_item_workflows", [])
+    changed = 0
+
+    for rule in rules:
+        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+        _emit(f"\n--- {rule.get('description', '(no description)')} ---")
+
+        steps = sorted(_get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", []),
+                       key=lambda x: x["attributes"].get("sequence", 0))
+        items = []
+        for f in _get(f"tabs/{tab}/field_definitions", auth, {"per_page": 100}).get("data", []):
+            a = f["attributes"]
+            if a.get("deleted_at") or a.get("data_type") != "select":
+                continue
+            parsed = _parse_item_name(a.get("name", ""))
+            if parsed:
+                items.append((parsed[0], a.get("name", "")))
+        if not items:
+            _emit("  no items on this tab — nothing to describe")
+            continue
+
+        for s in steps:
+            name = s["attributes"].get("name", "")
+            mine = [n for st, n in items if st.strip().lower() == name.strip().lower()]
+            lines = [_MANIFEST_MARKER]
+            lines.append("Items marked >> hold a card at THIS step until they are done."
+                         if mine else "No item holds a card at this step.")
+            for st, n in items:
+                mark = ">>" if st.strip().lower() == name.strip().lower() else "  "
+                lines.append(f"{mark} {n}")
+            block = "\n".join(lines)
+
+            existing = s["attributes"].get("description") or ""
+            kept = existing.split(_MANIFEST_MARKER)[0].rstrip()
+            wanted = f"{kept}\n\n{block}" if kept else block
+            if existing.strip() == wanted.strip():
+                _emit(f"  {name!r}: already current")
+                continue
+
+            _emit(f"  {name!r}: {'gates ' + ', '.join(mine) if mine else 'no gate'}"
+                  + ("  [preserving existing text]" if kept else ""))
+            changed += 1
+            if not apply:
+                continue
+            try:
+                requests.patch(
+                    f"{PCP_API_BASE}/workflows/{wf}/steps/{s['id']}",
+                    json={"data": {"type": "WorkflowStep", "id": s["id"],
+                                   "attributes": {"description": wanted}}},
+                    auth=auth, headers=HEADERS, timeout=15,
+                ).raise_for_status()
+            except requests.RequestException as e:
+                _emit(f"    ERROR: could not set description on {name!r}: {e}")
+
+    if not changed:
+        _emit("\nAll step descriptions already current.")
+    elif not apply:
+        _emit(f"\n{changed} step description(s) would change. "
+              f"Re-run with --i-mean-it to apply.")
+    else:
+        _emit(f"\n{changed} step description(s) written.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("probe", nargs="?", default="validate",
-                        choices=["validate", "reorder", "tabs",
+                        choices=["validate", "reorder", "describe", "tabs",
                                  "activities", "go-back", "send-email"],
                         help="defaults to 'validate'")
     parser.add_argument("--workflow", help="workflow id (not needed for 'tabs')")
@@ -723,7 +792,8 @@ def main() -> int:
                         help="skip the results dialog — for scripted or scheduled runs")
     parser.add_argument("--i-mean-it", action="store_true",
                         help="required for go-back and send-email, which mutate or send; "
-                             "for 'reorder', applies the change instead of a dry run")
+                             "for 'reorder' and 'describe', applies the change "
+                             "instead of a dry run")
     args = parser.parse_args()
 
     if not _project_id:
@@ -750,6 +820,9 @@ def main() -> int:
     elif args.probe == "reorder":
         _lines.clear()
         reorder_items_tab(auth, apply=args.i_mean_it)
+    elif args.probe == "describe":
+        _lines.clear()
+        describe_steps(auth, apply=args.i_mean_it)
     elif args.probe == "activities":
         probe_activities(auth, args.workflow, args.card)
     elif args.probe == "go-back":

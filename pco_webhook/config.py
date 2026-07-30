@@ -119,15 +119,15 @@ WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 
 # ─── Anytime Item Workflows ───────────────────────────────────────────────────
 # PCP workflows are strictly sequential, but some items ("buy a shirt") can be
-# done at any point and must still be done before the workflow completes. Each
-# such workflow gets a gate step the webhook only promotes once every item is
+# done at any point and must still be done before the workflow moves on. Each
+# item names the step it gates in its own name, so ONE workflow can have several
+# gates — the webhook holds a card at a step until that step's items are
 # satisfied. Edit via pco_utils.py → Edit Rules, or directly in rules.json.
 #
 # workflow_id:            PCP workflow the gate belongs to — from find_pcp_ids.py
 # field_tab_id:           PCP tab whose dropdown fields ARE the items. Nothing in
 #                         PCP links a tab to a workflow; this line is that link.
 #                         Discover with: python wf_anytimeitems_validate.py tabs
-# gate_step_id:           the "Outstanding items" step held until all items pass
 # requires_person_fields: durable field IDs on some OTHER tab, never cleared
 #                         (e.g. "background check on file"). Optional.
 # notes_field_id:         a text/paragraph field on the tab shown as the report's

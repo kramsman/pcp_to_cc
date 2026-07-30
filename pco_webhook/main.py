@@ -1107,8 +1107,13 @@ def _tab_field_definitions(tab_id: str, auth) -> list[dict]:
     return fields
 
 
-def _workflow_steps(workflow_id: str, auth) -> dict[str, int]:
-    """Return {step_id: sequence} for a workflow, cached per process."""
+def _workflow_steps(workflow_id: str, auth) -> list[dict]:
+    """Return [{id, name, sequence}] for a workflow in order, cached per process.
+
+    Items name the step they gate by NAME, so the gate needs to turn the card's
+    current step id into a name. Sequence is kept because durable prerequisites,
+    which name no step, gate whichever gated step comes first.
+    """
     if workflow_id in _steps_cache:
         return _steps_cache[workflow_id]
     r = requests.get(
@@ -1116,9 +1121,49 @@ def _workflow_steps(workflow_id: str, auth) -> dict[str, int]:
         params={"per_page": 100}, auth=auth, timeout=10,
     )
     r.raise_for_status()
-    steps = {s["id"]: s["attributes"].get("sequence", 0) for s in r.json().get("data", [])}
+    steps = sorted(
+        ({"id": s["id"],
+          "name": s["attributes"].get("name", ""),
+          "sequence": s["attributes"].get("sequence", 0)}
+         for s in r.json().get("data", [])),
+        key=lambda s: s["sequence"],
+    )
     _steps_cache[workflow_id] = steps
     return steps
+
+
+def _step_name(workflow_id: str, step_id: str, auth) -> str:
+    """Name of one step, or "" if the card is on no step (completed/removed)."""
+    if not step_id:
+        return ""
+    return next((s["name"] for s in _workflow_steps(workflow_id, auth)
+                 if s["id"] == str(step_id)), "")
+
+
+def items_gating_step(cfg: dict, workflow_id: str, step_name: str, auth) -> list[dict]:
+    """The items that hold a card at `step_name`, or [] if that step is not a gate.
+
+    Comparison is case- and space-insensitive, matching how satisfies() treats
+    values — a step renamed "Edit Bio" should not silently stop gating.
+
+    Durable prerequisites name no step. They gate the FIRST gated step, since
+    they must hold before the workflow proceeds at all; hanging them on a later
+    step would let a card past while a standing requirement was unmet.
+    """
+    if not step_name:
+        return []
+    key = step_name.strip().lower()
+    items = _gate_items(cfg, auth)
+    named = [i for i in items if i.get("step_name", "").strip().lower() == key]
+
+    durable = [i for i in items if not i.get("step_name")]
+    if durable:
+        gated = {i["step_name"].strip().lower() for i in items if i.get("step_name")}
+        first = next((s["name"].strip().lower() for s in _workflow_steps(workflow_id, auth)
+                      if s["name"].strip().lower() in gated), "")
+        if key == first:
+            named += durable
+    return named
 
 
 def satisfies(value: str, satisfying_values) -> bool:
@@ -1172,18 +1217,24 @@ def _gate_items(cfg: dict, auth) -> list[dict]:
     return items
 
 
-def outstanding_items(person: dict, cfg: dict, auth) -> tuple[list[dict], list[dict]]:
+def outstanding_items(person: dict, cfg: dict, auth,
+                      items: list | None = None) -> tuple[list[dict], list[dict]]:
     """Split a workflow's anytime items into (satisfied, outstanding) for a person.
 
     An item is satisfied when its stored value appears in `satisfying_values`.
     Anything else — "Promised", blank, an unrecognised value — leaves it
     outstanding, which is the conservative direction: the card parks rather than
     completing on a value nobody intended to mean "done".
+
+    `items` restricts the split to a subset — the gate passes one step's items,
+    since only those hold the card there. Notes and the report pass nothing and
+    get the whole workflow, because staff want the full picture regardless of
+    where the card happens to be.
     """
     satisfying = config.DEFAULT_SATISFYING_VALUES
     custom_fields = person.get("custom_fields", {})
     satisfied, outstanding = [], []
-    for item in _gate_items(cfg, auth):
+    for item in (_gate_items(cfg, auth) if items is None else items):
         values = custom_fields.get(str(item["id"]), [])
         # A renamed dropdown option silently blocks every card, so say so loudly.
         for v in values:
@@ -1256,7 +1307,10 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
         except requests.RequestException as e:
             logger.warning(f"reevaluate_gates_for_field: card lookup failed for {person_id}: {e}")
             continue
-        name = next((item_label(i) for i in _gate_items(cfg, auth)
+        # The full field name, matching the bulleted lists below — a note that
+        # said "'Rsvp' set to Yes" then listed "'Outstanding items!Rsvp'" would
+        # look like two different fields.
+        name = next((i["name"] for i in _gate_items(cfg, auth)
                       if i["id"] == str(field_definition_id)), str(field_definition_id))
         for card in cards:
             if excused:
@@ -1266,10 +1320,17 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
             step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
             trigger = f"{name!r} set to {value!r}." if value else f"{name!r} cleared."
             # Noted whatever step the card is on — status is useful from enrolment,
-            # not only once the card reaches the holding step. Skipped when the gate
-            # will release the card, since that writes its own note.
+            # not only once the card reaches a holding step. The note deliberately
+            # covers the WHOLE workflow, not just this step: staff want the full
+            # picture wherever the card happens to be.
             satisfied, outstanding = outstanding_items(person, cfg, auth)
-            if outstanding or step != str(cfg.get("gate_step_id", "")):
+            # Skipped only when the gate is about to release the card, since that
+            # writes its own note — i.e. this step is gated and nothing on it is
+            # outstanding. Any other step, or any remaining item here, still notes.
+            gating = items_gating_step(cfg, workflow_id,
+                                       _step_name(workflow_id, step, auth), auth)
+            _, here = outstanding_items(person, cfg, auth, items=gating)
+            if here or not gating:
                 note_item_status(workflow_id, card["id"], satisfied, outstanding,
                                  trigger, auth)
             results.append(evaluate_gate(person_id, workflow_id, card["id"], step,
@@ -1305,72 +1366,85 @@ def item_label(item: dict) -> str:
     return item.get("label") or item.get("name", "")
 
 
-def group_by_step(items: list) -> str:
-    """Render items as a bulleted list, one line per gating step:
+def item_list(items: list) -> str:
+    """Render items as a bulleted list, one line per item:
 
-        - Edit bio — 'Raw Bio', 'Photo'
-        - Outstanding items — 'Rsvp'
-        - any step — 'Background Check'
+        - 'Edit bio!Raw Bio'
+        - 'Edit bio!Photo'
+        - 'Outstanding items!Rsvp'
 
-    A list rather than a sentence: with 4-5 gates the run-on form repeated
-    "before" once per group and could not be skimmed.
+    Each line is the field's name exactly as it reads in PCP, so the note teaches
+    the step!field convention rather than paraphrasing it. That is also why the
+    separator here is "!" and not a dash: one punctuation mark, doing one job, in
+    both places a reader meets it.
 
-    Verified 2026-07-30 against a real card: PCP renders newlines in a note but
-    STRIPS leading whitespace, so indentation cannot carry the structure. Hence
-    the "- " — without a leading non-space character the trailing "Done:" line
-    reads as one more list item.
+    A list rather than a sentence: with 4-5 gates a run-on form could not be
+    skimmed. Verified 2026-07-30 against a real card: PCP renders newlines in a
+    note but STRIPS leading whitespace, so indentation cannot carry the
+    structure. Hence "- " — without a leading non-space character the trailing
+    "Done:" line reads as one more list item.
 
-    No colon as a separator here — step names may contain one as a display group
-    ("Bio: get raw"), and a colon on both sides of it reads as three colons doing
-    two jobs. Durable prerequisites gate no single step and are listed under
-    "any step".
+    Durable prerequisites have no step in their name and so appear bare, which is
+    itself the signal that they are not tied to one step.
 
     Order follows the order given, which is tab order — so once the items tab is
     sequenced from step order this reads in workflow order for free.
     """
-    groups: dict[str, list[str]] = {}
-    for i in items:
-        groups.setdefault(i.get("step_name", ""), []).append(f"{item_label(i)!r}")
-    return "\n".join(f"- {step or 'any step'} — {', '.join(labels)}"
-                     for step, labels in groups.items())
+    return "\n".join(f"- {i.get('name', '')!r}" for i in items)
 
 
 def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstanding: list,
-                     trigger: str, auth, released: bool = False) -> None:
+                     trigger: str, auth, released: bool = False,
+                     step_name: str = "") -> None:
     """Record anytime-item status in the card history.
 
     Called whatever step the card is on: staff need to know what is required from
-    enrolment, not only once the card reaches the holding step. Promotion is still
+    enrolment, not only once the card reaches a holding step. Promotion is still
     the gate's job.
+
+    `step_name` scopes the wording. The gate checks one step's items, so a bare
+    "All items complete" would claim the whole workflow was satisfied when later
+    gates may still be outstanding — naming the step keeps the note honest.
     """
     wf = pcp_name(f"workflows/{workflow_id}", auth) or f"workflow {workflow_id}"
-    # Quoted, matching how step names are shown: without it a note reads as one
-    # run-on sentence and the field names are impossible to pick out.
-    done = ", ".join(f"{item_label(i)!r}" for i in satisfied) or "nothing yet"
+    # Both halves use the same bulleted shape. They differed before — a list for
+    # one and a run-on for the other — which made them read as different kinds of
+    # thing when they are the same thing in two states.
+    done = item_list(satisfied) or "- nothing yet"
     lead = f"{wf} — {trigger}" if trigger else wf
+    scope = f"for {step_name!r} " if step_name else ""
     if released:
-        body = f"{lead}\nAll items complete, card released.\nDone: {done}."
+        body = f"{lead}\nAll items {scope}complete, card released.\nDone:\n{done}"
     elif outstanding:
-        body = f"{lead}\nStill needed:\n{group_by_step(outstanding)}\nDone: {done}."
+        body = f"{lead}\nStill needed:\n{item_list(outstanding)}\nDone:\n{done}"
     else:
-        body = f"{lead}\nAll items complete.\nDone: {done}."
+        body = f"{lead}\nAll items {scope}complete.\nDone:\n{done}"
     _add_card_note(workflow_id, card_id, body, auth)
 
 
 def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_id: str,
                   trigger: str = "", person: dict | None = None) -> str:
-    """Promote a card sitting on its gate step once every anytime item is satisfied.
+    """Promote a card once the items gating its CURRENT step are all satisfied.
+
+    A workflow may have several gates: each item names the step it holds, so the
+    step the card is sitting on decides which items are checked. A step no item
+    names is an ordinary step and is left alone — that is what makes several
+    mini-workflows fall out of one mechanism.
 
     Returns a short status string for logging/response. No-op for workflows with
-    no anytime config, and for cards not currently on the gate step.
+    no anytime config, and for cards on a step nothing gates.
 
-    `trigger` describes what prompted this run — "'>>_Rsvp' set to 'Yes'" or
-    "card arrived at the holding step" — and leads the note it writes.
+    `trigger` describes what prompted this run — "'Edit bio!Raw Bio' set to
+    'Yes'" or "card arrived at the holding step" — and leads the note it writes.
     """
     cfg = config.anytime_workflow(workflow_id)
     if not cfg:
         return "no-gate-config"
-    if current_step_id != str(cfg.get("gate_step_id", "")):
+
+    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    step_name = _step_name(workflow_id, current_step_id, auth)
+    gating = items_gating_step(cfg, workflow_id, step_name, auth)
+    if not gating:
         return "not-on-gate"
 
     if person is None:
@@ -1380,12 +1454,11 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
             return "person-fetch-failed"
         person = parse_person(pcp_data)
 
-    auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
-    satisfied, outstanding = outstanding_items(person, cfg, auth)
+    satisfied, outstanding = outstanding_items(person, cfg, auth, items=gating)
     names = [i["name"] for i in outstanding]     # full names: logs want the field, not the label
     logger.info(
         f"evaluate_gate: person={person_id} workflow={workflow_id} card={card_id} "
-        f"satisfied={[i['name'] for i in satisfied]} outstanding={names}"
+        f"step={step_name!r} satisfied={[i['name'] for i in satisfied]} outstanding={names}"
     )
 
     if outstanding:
@@ -1405,7 +1478,7 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
         # Only after the promote succeeds — a note claiming the card was released
         # when it was not is worse than no note.
         note_item_status(workflow_id, card_id, satisfied, outstanding, trigger, auth,
-                         released=True)
+                         released=True, step_name=step_name)
         logger.info(f"evaluate_gate: promoted card {card_id} past gate  HTTP {r.status_code}")
         return "promoted"
     except requests.RequestException as e:
@@ -1888,7 +1961,7 @@ def _handle_webhook_post():
                     _add_card_note(
                         workflow_id, event.card_id,
                         f"{_wf} — required anytime items:\n"
-                        f"{group_by_step(_items)}", _auth)
+                        f"{item_list(_items)}", _auth)
             except requests.RequestException as e:
                 logger.warning(f"could not note required items on card {event.card_id}: {e}")
             matched = True

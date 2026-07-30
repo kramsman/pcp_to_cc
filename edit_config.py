@@ -136,47 +136,46 @@ TABS = [
     {
         "title":         "Anytime WF Items",
         "description":   "Lets a workflow require items that can be done at ANY time, which PCO cannot do on "
-                         "its own because its steps are strictly sequential. Example: 'buy a shirt' can happen whenever.\n"
+                         "its own because its steps are strictly sequential. Example: a bio may arrive long "
+                         "before the step that needs it.\n"
                          "\n"
                          "SET UP IN PCO FIRST: (1) a tab/screen holding the item fields; (2) each item as a "
-                         "field named '>>_Something', e.g. '>>_RSVP', with the choices 'Yes' and 'Not Needed' "
-                         "— can use 'Clone PCO Fields' utility so every item gets the same choices; (3) a 'Holding "
-                         "Step' near the end of the workflow, e.g. 'Outstanding Items', plus one more step after it.\n"
+                         "dropdown named 'Step!Item' — the step it must be done BEFORE, then '!', then the "
+                         "item, e.g. 'Edit bio!Raw Bio' — with the choices 'Yes' and 'Not Needed'. Use the "
+                         "'Clone PCO Fields' utility so every item gets the same choices.\n"
                          "\n"
-                         "THEN FILL IN BELOW. The card is held at the Holding Step until every item is done, "
-                         "then released automatically.\n"
+                         "THE STEP NAME IN THE FIELD IS THE SETTING. There is nothing to configure here about "
+                         "which step holds which item: a card is held at a step until that step's items are "
+                         "done, then released automatically. One workflow can have as many gates as it has "
+                         "steps, so add a gate by adding a field — no change here, no deploy.\n"
                          "\n"
-                         "WHAT COUNTS: only dropdowns whose name starts with '>>_'. Text and paragraph fields "
-                         "are ignored. An item is done when "
+                         "WHAT COUNTS: only dropdowns whose name contains '!'. Text and paragraph fields are "
+                         "ignored, as are dropdowns with no '!'. An item is done when "
                          "it is set to 'Yes' or 'Not Needed' — anything else, such as 'Waiting' or 'Promised', "
                          "leaves it outstanding. 'Not Needed' is the escape hatch when an item turns out not to "
-                         "apply; it lets the card finish and is noted on the card and counted separately on the "
+                         "apply; it lets the card move on and is noted on the card and counted separately on the "
                          "report.\n"
                          "\n"
                          "CHECK IT: run 'Chk WF Anytime-Items' after any change here, to a dropdown's choices, "
                          "or to the workflow's steps — mistakes here are silent, and cards simply stop moving. "
                          "See who still owes what with 'Rpt WF Anytime-Items'.",
         "key":           "anytime_item_workflows",
-        "cols":          ["description", "workflow_id", "field_tab_id", "gate_step_id",
+        "cols":          ["description", "workflow_id", "field_tab_id",
                           "requires_person_fields", "notes_field_id"],
         "labels":        {
             "description":            "Description",
             "workflow_id":            "Workflow ID",
-            "field_tab_id":           "Items Tab/Screen (holds the >>_ fields)",
-            "gate_step_id":           "Holding Step ID",
+            "field_tab_id":           "Items Tab/Screen (holds the 'step!field' items)",
             "requires_person_fields": "Durable field IDs, never cleared (comma separated, optional)",
             "notes_field_id":         "Notes field for the report (optional)",
         },
-        "widths":        [300, 170, 220, 150, 220, 170],
+        "widths":        [300, 170, 260, 220, 170],
         "trigger_field": None,
         "optional_cols": ["requires_person_fields", "notes_field_id"],
-        # Which fields are items is not configured here — an item names the step
-        # it gates inside its own name ("get bio!Raw Bio"), so there is nothing to
-        # pick. See ITEM_SEPARATOR in pco_webhook/config.py.
-        # Choices that only exist once another field is chosen: a workflow's
-        # steps, and the dropdown values used by the items on a tab.
+        # No holding step to configure: an item names the step it gates inside its
+        # own name ("Edit bio!Raw Bio"), so a workflow can have several gates and
+        # none of them is a setting. See ITEM_SEPARATOR in pco_webhook/config.py.
         "dependent_cols": {
-            "gate_step_id":      {"source": "workflow_id",  "fetch": "workflow_steps"},
             # Offers only dropdowns that live off the items tab, so a text field
             # or an items-tab field can no longer be chosen here — both would
             # park every card forever.
