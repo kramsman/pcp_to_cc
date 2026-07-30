@@ -1261,10 +1261,10 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
         for card in cards:
             if excused:
                 _add_card_note(workflow_id, card["id"],
-                               f"{name} marked {value!r} — excused, not completed "
+                               f"{name!r} marked {value!r} — excused, not completed "
                                f"({datetime.now().strftime('%d %b %Y')}).", auth)
             step = (card.get("relationships", {}).get("current_step", {}).get("data") or {}).get("id", "")
-            trigger = f"{name} set to {value!r}." if value else f"{name} cleared."
+            trigger = f"{name!r} set to {value!r}." if value else f"{name!r} cleared."
             # Noted whatever step the card is on — status is useful from enrolment,
             # not only once the card reaches the holding step. Skipped when the gate
             # will release the card, since that writes its own note.
@@ -1306,21 +1306,33 @@ def item_label(item: dict) -> str:
 
 
 def group_by_step(items: list) -> str:
-    """Render items grouped by the step they gate, e.g.
+    """Render items as a bulleted list, one line per gating step:
 
-        before 'get bio': Raw Bio; before 'send rsvp reminder': Rsvp
+        - Edit bio — 'Raw Bio', 'Photo'
+        - Outstanding items — 'Rsvp'
+        - any step — 'Background Check'
+
+    A list rather than a sentence: with 4-5 gates the run-on form repeated
+    "before" once per group and could not be skimmed.
+
+    Verified 2026-07-30 against a real card: PCP renders newlines in a note but
+    STRIPS leading whitespace, so indentation cannot carry the structure. Hence
+    the "- " — without a leading non-space character the trailing "Done:" line
+    reads as one more list item.
+
+    No colon as a separator here — step names may contain one as a display group
+    ("Bio: get raw"), and a colon on both sides of it reads as three colons doing
+    two jobs. Durable prerequisites gate no single step and are listed under
+    "any step".
 
     Order follows the order given, which is tab order — so once the items tab is
-    sequenced from step order this reads in workflow order for free. Durable
-    prerequisites have no step and are grouped under "overall".
+    sequenced from step order this reads in workflow order for free.
     """
     groups: dict[str, list[str]] = {}
     for i in items:
-        groups.setdefault(i.get("step_name", ""), []).append(item_label(i))
-    return "; ".join(
-        f"before {step!r}: {', '.join(labels)}" if step else f"overall: {', '.join(labels)}"
-        for step, labels in groups.items()
-    )
+        groups.setdefault(i.get("step_name", ""), []).append(f"{item_label(i)!r}")
+    return "\n".join(f"- {step or 'any step'} — {', '.join(labels)}"
+                     for step, labels in groups.items())
 
 
 def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstanding: list,
@@ -1332,14 +1344,16 @@ def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstandin
     the gate's job.
     """
     wf = pcp_name(f"workflows/{workflow_id}", auth) or f"workflow {workflow_id}"
-    done = ", ".join(item_label(i) for i in satisfied) or "nothing yet"
-    lead = f"{wf} — {trigger}" if trigger else f"{wf} —"
+    # Quoted, matching how step names are shown: without it a note reads as one
+    # run-on sentence and the field names are impossible to pick out.
+    done = ", ".join(f"{item_label(i)!r}" for i in satisfied) or "nothing yet"
+    lead = f"{wf} — {trigger}" if trigger else wf
     if released:
-        body = f"{lead}  All items complete, card released.  Done: {done}."
+        body = f"{lead}\nAll items complete, card released.\nDone: {done}."
     elif outstanding:
-        body = f"{lead}  Still needed — {group_by_step(outstanding)}.  Done: {done}."
+        body = f"{lead}\nStill needed:\n{group_by_step(outstanding)}\nDone: {done}."
     else:
-        body = f"{lead}  All items complete.  Done: {done}."
+        body = f"{lead}\nAll items complete.\nDone: {done}."
     _add_card_note(workflow_id, card_id, body, auth)
 
 
@@ -1873,8 +1887,8 @@ def _handle_webhook_post():
                     _wf = pcp_name(f"workflows/{workflow_id}", _auth) or f"workflow {workflow_id}"
                     _add_card_note(
                         workflow_id, event.card_id,
-                        f"{_wf} — required before this workflow can complete: "
-                        f"{group_by_step(_items)}.", _auth)
+                        f"{_wf} — required anytime items:\n"
+                        f"{group_by_step(_items)}", _auth)
             except requests.RequestException as e:
                 logger.warning(f"could not note required items on card {event.card_id}: {e}")
             matched = True
