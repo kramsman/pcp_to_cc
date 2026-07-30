@@ -1134,30 +1134,41 @@ def satisfies(value: str, satisfying_values) -> bool:
 def _gate_items(cfg: dict, auth) -> list[dict]:
     """Return the fields that actually gate the workflow.
 
-    An item is a `select` (dropdown) on the tab whose NAME starts with
-    config.DEFAULT_ITEM_PREFIX. It must be a dropdown because a text field's prose
-    can never equal a satisfying value and would park every card forever.
+    An item is a `select` (dropdown) on the tab whose name parses as
+    "step!label" — see config.parse_item_name(). It must be a dropdown because a
+    text field's prose can never equal a satisfying value and would park every
+    card forever.
 
-    The prefix is one org-wide constant rather than per-rule config: there is only
-    ever one answer, and a rule able to set it blank would silently promote every
-    dropdown on the tab to a required item.
+    Each item carries two extra keys the plain field definition has not got:
 
-    Durable prerequisites named by requires_person_fields are appended.
+        step_name  the step this item gates, from its own name
+        label      the item's name with the step stripped off, for display
+
+    Durable prerequisites named by requires_person_fields are appended. They live
+    off the items tab and have no step in their name, so step_name is "" — they
+    apply to the workflow as a whole rather than to one step.
     """
-    prefix = config.DEFAULT_ITEM_PREFIX
-    items = [f for f in _tab_field_definitions(cfg["field_tab_id"], auth)
-             if f["data_type"] == "select"
-             and (not prefix or f["name"].startswith(prefix))]
+    items = []
+    for f in _tab_field_definitions(cfg["field_tab_id"], auth):
+        if f["data_type"] != "select":
+            continue
+        parsed = config.parse_item_name(f["name"])
+        if not parsed:
+            continue
+        step_name, label = parsed
+        items.append({**f, "step_name": step_name, "label": label})
+
     durable = set(str(x) for x in cfg.get("requires_person_fields", []))
     if durable:
         seen = {f["id"] for f in items}
         for tab in {str(w["field_tab_id"]) for w in config.ANYTIME_ITEM_WORKFLOWS}:
             for f in _tab_field_definitions(tab, auth):
                 if f["id"] in durable and f["id"] not in seen:
-                    items.append(f)
+                    items.append({**f, "step_name": "", "label": f["name"]})
                     seen.add(f["id"])
         for fid in durable - {f["id"] for f in items}:
-            items.append({"id": fid, "name": f"field {fid}", "data_type": "select", "options": []})
+            items.append({"id": fid, "name": f"field {fid}", "data_type": "select",
+                          "options": [], "step_name": "", "label": f"field {fid}"})
     return items
 
 
@@ -1245,7 +1256,7 @@ def reevaluate_gates_for_field(person_id: str, field_definition_id: str,
         except requests.RequestException as e:
             logger.warning(f"reevaluate_gates_for_field: card lookup failed for {person_id}: {e}")
             continue
-        name = next((i["name"] for i in _gate_items(cfg, auth)
+        name = next((item_label(i) for i in _gate_items(cfg, auth)
                       if i["id"] == str(field_definition_id)), str(field_definition_id))
         for card in cards:
             if excused:
@@ -1285,6 +1296,33 @@ def pcp_name(path: str, auth) -> str:
     return _pcp_name_cache[path]
 
 
+def item_label(item: dict) -> str:
+    """The item's display name — the part after the separator, step stripped off.
+
+    Falls back to the raw field name for durable prerequisite fields, which have
+    no step in their name.
+    """
+    return item.get("label") or item.get("name", "")
+
+
+def group_by_step(items: list) -> str:
+    """Render items grouped by the step they gate, e.g.
+
+        before 'get bio': Raw Bio; before 'send rsvp reminder': Rsvp
+
+    Order follows the order given, which is tab order — so once the items tab is
+    sequenced from step order this reads in workflow order for free. Durable
+    prerequisites have no step and are grouped under "overall".
+    """
+    groups: dict[str, list[str]] = {}
+    for i in items:
+        groups.setdefault(i.get("step_name", ""), []).append(item_label(i))
+    return "; ".join(
+        f"before {step!r}: {', '.join(labels)}" if step else f"overall: {', '.join(labels)}"
+        for step, labels in groups.items()
+    )
+
+
 def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstanding: list,
                      trigger: str, auth, released: bool = False) -> None:
     """Record anytime-item status in the card history.
@@ -1294,13 +1332,12 @@ def note_item_status(workflow_id: str, card_id: str, satisfied: list, outstandin
     the gate's job.
     """
     wf = pcp_name(f"workflows/{workflow_id}", auth) or f"workflow {workflow_id}"
-    done = ", ".join(i["name"] for i in satisfied) or "nothing yet"
+    done = ", ".join(item_label(i) for i in satisfied) or "nothing yet"
     lead = f"{wf} — {trigger}" if trigger else f"{wf} —"
     if released:
         body = f"{lead}  All items complete, card released.  Done: {done}."
     elif outstanding:
-        still = ", ".join(i["name"] for i in outstanding)
-        body = f"{lead}  Still needed: {still}.  Done: {done}."
+        body = f"{lead}  Still needed — {group_by_step(outstanding)}.  Done: {done}."
     else:
         body = f"{lead}  All items complete.  Done: {done}."
     _add_card_note(workflow_id, card_id, body, auth)
@@ -1331,7 +1368,7 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
 
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
     satisfied, outstanding = outstanding_items(person, cfg, auth)
-    names = [i["name"] for i in outstanding]
+    names = [i["name"] for i in outstanding]     # full names: logs want the field, not the label
     logger.info(
         f"evaluate_gate: person={person_id} workflow={workflow_id} card={card_id} "
         f"satisfied={[i['name'] for i in satisfied]} outstanding={names}"
@@ -1404,7 +1441,7 @@ def clear_consumable_items(person_id: str, workflow_id: str, card_id: str) -> No
             continue
         values = [v for v in custom_fields.get(str(item["id"]), []) if v]
         if values:
-            carried.append(f"{item['name']}: {', '.join(values)}")
+            carried.append(f"{item_label(item)}: {', '.join(values)}")
             clear_custom_field(person_id, item["id"])
     if carried:
         _add_card_note(workflow_id, card_id,
@@ -1535,7 +1572,24 @@ def render_readiness_html(data: dict) -> str:
     wf_suffix = f" ({wf_name})" if wf_name else ""
     tab_suffix = f" ({tab_name})" if tab_name else ""
 
-    head = "".join(f"<th>{esc(i['name'])}</th>" for i in items)
+    # Two header rows: the step each group of items gates, then the item labels.
+    # With 4-5 gates a flat row of full field names is unreadable, and the step is
+    # the thing a reader chases by ("who is still stuck before 'get bio'").
+    # Groups are contiguous runs, so tab order decides — sequence the items tab
+    # from step order and this reads in workflow order.
+    groups: list[tuple[str, int]] = []
+    for i in items:
+        step = i.get("step_name", "")
+        if groups and groups[-1][0] == step:
+            groups[-1] = (step, groups[-1][1] + 1)
+        else:
+            groups.append((step, 1))
+    grouped = any(step for step, _ in groups)
+    head_steps = "".join(
+        f'<th colspan="{n}" class="grp">{esc(step) if step else "&nbsp;"}</th>'
+        for step, n in groups
+    )
+    head = "".join(f"<th>{esc(item_label(i))}</th>" for i in items)
     body = []
     for r in rows:
         cells = []
@@ -1558,7 +1612,7 @@ def render_readiness_html(data: dict) -> str:
         )
 
     summary = "  ".join(
-        f'<span class="pill">{esc(i["name"])}: '
+        f'<span class="pill">{esc(item_label(i))}: '
         f'{totals["per_item"][i["id"]]["outstanding"]} outstanding'
         + (f' ({totals["per_item"][i["id"]]["excused"]} not needed)'
            if totals["per_item"][i["id"]]["excused"] else "")
@@ -1584,6 +1638,10 @@ def render_readiness_html(data: dict) -> str:
  th,td {{ padding:.4rem .6rem; text-align:left; white-space:nowrap;
           border-bottom:1px solid rgba(128,128,128,.25); }}
  th {{ font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; opacity:.7; }}
+ tr.steps th {{ text-transform:none; letter-spacing:0; opacity:.9; }}
+ .grp {{ font-weight:700; text-align:center;
+         border-left:2px solid rgba(128,128,128,.45);
+         border-bottom:2px solid rgba(128,128,128,.45); }}
  .nm {{ font-weight:600; }}
  .qt {{ opacity:.75; font-size:.9em; }}
  .todo {{ color:#b3261e; font-weight:600; }}
@@ -1603,7 +1661,8 @@ def render_readiness_html(data: dict) -> str:
 <div class="totals"><strong>{totals['enrolled']} enrolled · {totals['ready']} ready ·
  {totals['outstanding']} outstanding</strong><br>{summary}</div>
 <div class="wrap"><table>
-<thead><tr><th>Name</th><th>Phone</th><th>Email</th>{head}<th>Miss</th><th>Notes</th></tr></thead>
+<thead>{f'<tr class="steps"><th colspan="3"></th>{head_steps}<th colspan="2"></th></tr>' if grouped else ''}
+<tr><th>Name</th><th>Phone</th><th>Email</th>{head}<th>Miss</th><th>Notes</th></tr></thead>
 <tbody>{''.join(body)}</tbody></table></div>
 </body></html>"""
 
@@ -1651,7 +1710,7 @@ def send_chase_emails(workflow_id: str, dry_run: bool = True) -> dict:
     if dry_run or config.TEST_MODE:
         for t in targets:
             logger.info(f"DRY RUN — would email {t['email']}: "
-                        f"{[i['name'] for i in t['outstanding_names']]}")
+                        f"{[item_label(i) for i in t['outstanding_names']]}")
         return {"sent": 0, "would_send": len(targets), "dry_run": True,
                 "recipients": [t["email"] for t in targets]}
 
@@ -1815,7 +1874,7 @@ def _handle_webhook_post():
                     _add_card_note(
                         workflow_id, event.card_id,
                         f"{_wf} — required before this workflow can complete: "
-                        f"{', '.join(i['name'] for i in _items)}.", _auth)
+                        f"{group_by_step(_items)}.", _auth)
             except requests.RequestException as e:
                 logger.warning(f"could not note required items on card {event.card_id}: {e}")
             matched = True

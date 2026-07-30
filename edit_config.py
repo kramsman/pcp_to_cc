@@ -170,7 +170,9 @@ TABS = [
         "widths":        [300, 170, 220, 150, 220, 170],
         "trigger_field": None,
         "optional_cols": ["requires_person_fields", "notes_field_id"],
-        # item_prefix is free text, not an ID lookup — no dropdown for it.
+        # Which fields are items is not configured here — an item names the step
+        # it gates inside its own name ("get bio!Raw Bio"), so there is nothing to
+        # pick. See ITEM_SEPARATOR in pco_webhook/config.py.
         # Choices that only exist once another field is chosen: a workflow's
         # steps, and the dropdown values used by the items on a tab.
         "dependent_cols": {

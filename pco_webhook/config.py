@@ -128,16 +128,14 @@ WORKFLOW_CHAIN_RULES = _rules["workflow_chain_rules"]
 #                         PCP links a tab to a workflow; this line is that link.
 #                         Discover with: python wf_anytimeitems_validate.py tabs
 # gate_step_id:           the "Outstanding items" step held until all items pass
-# item_prefix:            name prefix marking which dropdowns are items, e.g. ">>_"
-#                         for a field named ">>_RSVP". Lets non-item dropdowns share
-#                         the tab, and shows staff on a profile which are required.
-#                         Leave blank to treat EVERY dropdown on the tab as an item.
-# satisfying_values:      dropdown values that count as done — everything else,
-#                         including blank, leaves the item outstanding
 # requires_person_fields: durable field IDs on some OTHER tab, never cleared
 #                         (e.g. "background check on file"). Optional.
 # notes_field_id:         a text/paragraph field on the tab shown as the report's
 #                         final column. Optional.
+#
+# Which fields are items is NOT configured — it is read from their names, see
+# ITEM_SEPARATOR below. Adding an item is a PCP UI action with no config change
+# and no deploy.
 #
 # Only `select` (dropdown) fields on the tab are items. text/paragraph/boolean
 # fields are data — shown on the report, never gating — so content fields such as
@@ -157,10 +155,48 @@ def _as_list(value) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
-# One prefix used across the org, so there is a single thing to learn and type.
-# A rule may still override it, and a blank rule prefix keeps the original
-# behaviour of treating every dropdown on the tab as an item.
-DEFAULT_ITEM_PREFIX = ">>_"
+# An item field names the step it gates, inside its own name:
+#
+#     get bio!Raw Bio          gates the step called "get bio"
+#     Bio: get raw!Raw Bio     gates the step called "Bio: get raw"
+#
+# "!" is reserved on items tabs: a field containing it IS an anytime item, and
+# needs no separate marker. Anything malformed — a step that does not exist, a
+# non-dropdown, a typo — is caught by wf_anytimeitems_validate.py, which is a
+# better place for it than a prefix nobody can see the absence of.
+#
+# The step is matched by NAME, not id: step ids change whenever a step is
+# recreated or a workflow duplicated, while the name reads plainly to staff.
+#
+# ":" is reserved in STEP names as a display grouping separator ("Bio: get raw",
+# "Bio: edit"). It affects sorting and report headings only, never enforcement.
+# There is no conflict between the two: the split below takes the FIRST "!", so
+# any ":" in the step name passes through untouched.
+ITEM_SEPARATOR = "!"
+
+# Replaced the ">>_" name prefix on 2026-07-30. Fields still carrying it are
+# flagged by the validator as needing renaming, since under "!" discovery they
+# would silently gate nothing.
+LEGACY_ITEM_PREFIX = ">>"
+
+
+def parse_item_name(field_name: str) -> tuple[str, str] | None:
+    """Split an item field name into (step_name, item_label), or None.
+
+    Shared by the webhook, the validator and the clone tool so they can never
+    disagree about what counts as an item. Returns None for ordinary data fields,
+    which is every field with no separator.
+
+    Splits on the FIRST separator, so an item label may itself contain "!" while
+    a step name may not — the validator flags step names that do.
+    """
+    if ITEM_SEPARATOR not in field_name:
+        return None
+    step, _, label = field_name.partition(ITEM_SEPARATOR)
+    step, label = step.strip(), label.strip()
+    if not step or not label:
+        return None
+    return step, label
 
 # The only values that let an item pass. One vocabulary for every workflow, so
 # there is nothing per-rule to get wrong. Edit here to change it everywhere.

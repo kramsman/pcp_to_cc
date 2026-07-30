@@ -45,6 +45,11 @@ from wf_anytimeitems_validate import PCP_API_BASE, _get_secret  # noqa: E402
 
 HEADERS = {"User-Agent": "pco_webhook (office2@4thu.org)"}
 
+# Kept in step with pco_webhook.config.ITEM_SEPARATOR, but not imported at module
+# level: config reads rules.json, and this tool must still run when that file is
+# mid-edit. gating_step() imports config lazily and tolerates failure.
+SEPARATOR = "!"
+
 
 def _auth() -> tuple:
     return (_get_secret("PCP_APP_ID"), _get_secret("PCP_SECRET"))
@@ -123,17 +128,41 @@ def fields_on(tab_id: str, auth) -> list[dict]:
     return out
 
 
-def default_prefix(target_tab: str) -> str:
-    """Prefix for this tab: the rule that owns it wins, else the global default."""
+def _workflow_for_tab(target_tab: str) -> str:
+    """The workflow whose anytime items live on this tab, or "" if none does."""
     try:
         sys.path.insert(0, os.path.join(_HERE, "pco_webhook"))
         from pco_webhook import config
         for w in config.ANYTIME_ITEM_WORKFLOWS:
             if str(w.get("field_tab_id")) == str(target_tab):
-                return str(w.get("item_prefix", "")).strip() or config.DEFAULT_ITEM_PREFIX
-        return config.DEFAULT_ITEM_PREFIX
+                return str(w.get("workflow_id", ""))
     except Exception:
-        return ">>_"
+        pass
+    return ""
+
+
+def gating_step(target_tab: str, auth) -> str:
+    """Ask which step the new fields should gate, and return its NAME.
+
+    An anytime item names the step it gates inside its own name — "get bio!Raw
+    Bio" — so on an items tab the question is not "what prefix?" but "which step
+    does this belong to?". Returns "" for a plain data field, which is the right
+    answer for bio prose and note fields sharing the tab.
+    """
+    workflow_id = _workflow_for_tab(target_tab)
+    if not workflow_id:
+        return ""
+    try:
+        steps = _get(f"workflows/{workflow_id}/steps", auth, {"per_page": 100}).get("data", [])
+    except requests.RequestException as e:
+        print(f"  (could not read steps for workflow {workflow_id}: {e})")
+        return ""
+    steps.sort(key=lambda s: s["attributes"].get("sequence", 0))
+    rows = [("", "— none: a plain data field, not an anytime item")]
+    rows += [(s["attributes"].get("name", ""),
+              f"{s['attributes'].get('name', '')}") for s in steps]
+    chosen = pick("\nWhich step should these gate?", rows)
+    return chosen or ""
 
 
 # ── the clone itself ──────────────────────────────────────────────────────────
@@ -218,12 +247,7 @@ def main() -> int:
     if not tgt_tab:
         return 0
 
-    # Spelled out rather than using ask()'s "[default]" suffix, so both the
-    # default and the way to decline it are visible in one line.
-    dflt = default_prefix(tgt_tab)
-    hint = f"enter for {dflt!r}, '-' for none" if dflt else "enter for none"
-    raw = input(f"\nField name prefix ({hint}): ").strip()
-    prefix = "" if raw == "-" else (raw or dflt)
+    step = gating_step(tgt_tab, auth)
 
     print(f"\nTemplate: {template['name']!r} ({template['data_type']})"
           + (f" options={template['options']}" if template["options"] else ""))
@@ -237,7 +261,7 @@ def main() -> int:
         by_slug = {slugify(f["name"]) for f in existing}
 
         for part in [p.strip() for p in raw.split(",") if p.strip()]:
-            name = f"{prefix}{part}"
+            name = f"{step}{SEPARATOR}{part}" if step else part
             if name.lower() in by_name:
                 print(f"  SKIPPED {name!r} — that tab already has a field with this name.")
                 continue

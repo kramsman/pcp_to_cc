@@ -318,14 +318,17 @@ def _satisfying_values() -> list:
         return ["Yes", "Not Needed"]
 
 
-def _item_prefix() -> str:
-    """The org-wide item prefix, from pco_webhook/config.py."""
+def _parse_item_name(field_name: str):
+    """Split "step!label", via pco_webhook/config.py so both agree exactly."""
     try:
         sys.path.insert(0, str(Path(__file__).parent / "pco_webhook"))
         from pco_webhook import config
-        return config.DEFAULT_ITEM_PREFIX
+        return config.parse_item_name(field_name)
     except Exception:
-        return ">>_"
+        if "!" not in field_name:
+            return None
+        step, _, label = field_name.partition("!")
+        return (step.strip(), label.strip()) if step.strip() and label.strip() else None
 
 
 def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
@@ -394,46 +397,82 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
                     {"include": "field_options", "per_page": 100})
         by_id = {i["id"]: i["attributes"]["value"]
                  for i in body.get("included", []) if i.get("type") == "FieldOption"}
-        prefix = _item_prefix()
-        _emit(f"  Default item prefix being used: {prefix}")
+        # An item names the step it gates, so the step list is what item names are
+        # checked against. Two steps sharing a name make "get bio!Raw Bio"
+        # ambiguous; the card would park at one and sail through the other.
+        ordered = sorted(steps, key=lambda x: x["attributes"].get("sequence", 0))
+        step_names = [s["attributes"].get("name", "") for s in ordered]
+        step_lc = {n.strip().lower() for n in step_names}
+        last_step = step_names[-1] if step_names else ""
+
+        seen_lc = set()
+        for n in step_names:
+            key = n.strip().lower()
+            if key in seen_lc:
+                _emit(f"    ERROR: two steps in this workflow are both named {n!r}. An item "
+                      f"naming it cannot say which is meant, so the card parks at one and "
+                      f"passes straight through the other. Rename one.")
+                problems += 1
+            seen_lc.add(key)
+            if "!" in n:
+                _emit(f"    ERROR: step {n!r} contains '!', which is reserved as the item "
+                      f"separator. A field naming this step could not be parsed. Rename it.")
+                problems += 1
         _emit()
 
-        selects, ignored, unmarked, mismarked, all_options = [], [], [], [], set()
+        selects, ignored, unmarked, mismarked, legacy, all_options = [], [], [], [], [], set()
         for f in body.get("data", []):
             if f["attributes"].get("deleted_at"):
                 continue
             name, dtype = f["attributes"].get("name", ""), f["attributes"].get("data_type")
-            marked = bool(prefix) and name.startswith(prefix)
-            if dtype == "select" and (not prefix or marked):
+            parsed = _parse_item_name(name)
+            if name.startswith(">>"):
+                legacy.append((f["id"], name))
+            if parsed and dtype == "select":
                 opts = [by_id[r["id"]] for r in
                         (f.get("relationships", {}).get("field_options", {}).get("data") or [])
                         if r["id"] in by_id]
-                selects.append((f["id"], name, opts))
+                selects.append((f["id"], name, opts, parsed[0], parsed[1]))
                 all_options.update(opts)
+            elif parsed:
+                mismarked.append((f["id"], name, dtype))   # names a step, but not a dropdown
             elif dtype == "select":
-                unmarked.append((f["id"], name))       # dropdown, but no prefix
-            elif marked:
-                mismarked.append((f["id"], name, dtype))  # marked, but not a dropdown
+                unmarked.append((f["id"], name))           # dropdown gating nothing
             else:
                 ignored.append((name, dtype))
 
         _emit(f"  Associated fields in tab/screen {tab_name(tab, auth)!r} {tab}; "
               f"{len(selects)} required, {len(ignored)} ignored")
-        for fid, name, opts in selects:
-            _emit(f"    ITEM  {fid:<10} {name:<34} options={opts}")
+        for fid, name, opts, step_name, label in selects:
+            _emit(f"    ITEM  {fid:<10} {label:<24} before step {step_name!r}  options={opts}")
         for name, dtype in ignored:
             _emit(f"    data  {'':<10} {name:<34} ({dtype}) — not required")
 
-        # The prefix turns a silent mistake into a visible one. Without these
-        # two checks, a forgotten prefix means the item is never enforced and
-        # nothing anywhere says so.
+        # Without a marker on the field, a typo in the step name is the failure
+        # that matters: the item looks fine and silently gates nothing. These
+        # checks are what make that loud.
+        for fid, name, opts, step_name, label in selects:
+            if step_name.strip().lower() not in step_lc:
+                _emit(f"    ERROR: {name!r} ({fid}) names step {step_name!r}, which does not "
+                      f"exist in this workflow, so it gates nothing. Steps: {step_names}")
+                problems += 1
+            elif step_name.strip().lower() == last_step.strip().lower():
+                _emit(f"    WARNING: {name!r} ({fid}) gates {step_name!r}, the LAST step. "
+                      f"Nothing follows it, so a card completes rather than parking. "
+                      f"Add a trailing step after it.")
+
+        for fid, name in legacy:
+            _emit(f"    ERROR: {name!r} ({fid}) still uses the old '>>_' prefix. Items now "
+                  f"name the step they gate, e.g. 'get bio!{name.lstrip('>_')}'. As it "
+                  f"stands it gates nothing.")
+            problems += 1
         for fid, name in unmarked:
-            _emit(f"    NOTE: dropdown {name!r} ({fid}) has no {prefix!r} prefix, so it is "
-                  f"NOT required. Rename it to '{prefix}{name}' if it should be.")
+            _emit(f"    NOTE: dropdown {name!r} ({fid}) names no step, so it is NOT required. "
+                  f"Rename it to 'step!{name}' if it should gate one.")
         for fid, name, dtype in mismarked:
-            _emit(f"    ERROR: {name!r} ({fid}) starts with {prefix!r} but is a `{dtype}`, "
-                  f"not a dropdown. Its value can never match a satisfying value, so it is "
-                  f"being ignored. Make it a dropdown or remove the prefix.")
+            _emit(f"    ERROR: {name!r} ({fid}) names a step but is a `{dtype}`, not a "
+                  f"dropdown. Its value can never match a satisfying value, so it is being "
+                  f"ignored. Make it a dropdown or take the '!' out of its name.")
             problems += 1
 
         # Every option is checked against one approved vocabulary. Comparing items
@@ -442,7 +481,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
         # typed "Latter" leaves its rule silently never firing.
         known = _known_options()
         known_lc = {k.strip().lower() for k in known}
-        unknown = [(fid, name, o) for fid, name, opts in selects
+        unknown = [(fid, name, o) for fid, name, opts, _step, _label in selects
                    for o in opts if o.strip().lower() not in known_lc]
         for fid, name, opt in unknown:
             _emit(f"    NOTE: {name!r} ({fid}) offers {opt!r}, which is not a known choice.")
@@ -453,7 +492,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
 
         if not selects:
             _emit("    ERROR: nothing on this tab is required, so the card is released "
-                  "immediately." + (f" No dropdown starts with {prefix!r}." if prefix else ""))
+                  "immediately. No dropdown here names a step, e.g. 'get bio!Raw Bio'.")
             problems += 1
 
         satisfying = _satisfying_values()
@@ -469,7 +508,7 @@ def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
             _emit(f"    NOTE: {unmatched} match no option on this tab. Harmless if "
                   f"intentional (e.g. spelling variants), but a typo here means the "
                   f"item can never be satisfied.")
-        never = [(fid, n) for fid, n, o in selects
+        never = [(fid, n) for fid, n, o, _step, _label in selects
                  if not {x.strip().lower() for x in o} & sat_lc]
         for fid, n in never:
             _emit(f"    ERROR: item {n!r} ({fid}) has NO option that satisfies it — "
@@ -596,11 +635,86 @@ def render_html(lines: list[str], problems: int) -> str:
 </body></html>"""
 
 
+def reorder_items_tab(auth: tuple, apply: bool = False) -> int:
+    """Sequence each rule's items tab to match its workflow's step order.
+
+    With gates spread across several steps, the items tab IS the place to see
+    everything a workflow requires — it is visible on any profile and under
+    People → Manage → Tabs. But PCP orders tab fields by a manual `sequence`, so
+    without this they sit in creation order and the grouping is invisible.
+
+    Items sort by their step's position, then by label. Fields that gate nothing
+    (bio prose, notes) keep to the end, where they read as an appendix.
+
+    Read-only unless `apply`, so the intended order can be checked first.
+    """
+    _emit("=" * 78)
+    _emit("Order items tabs to match step order" + ("" if apply else "  (DRY RUN)"))
+    _emit("=" * 78)
+
+    rules_path = Path(__file__).parent / "rules.json"
+    rules = json.loads(rules_path.read_text()).get("anytime_item_workflows", [])
+    changed = 0
+
+    for rule in rules:
+        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+        _emit(f"\n--- {rule.get('description', '(no description)')} ---")
+
+        steps = _get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", [])
+        rank = {s["attributes"].get("name", "").strip().lower(): i
+                for i, s in enumerate(sorted(steps,
+                                             key=lambda x: x["attributes"].get("sequence", 0)))}
+
+        fields = [f for f in _get(f"tabs/{tab}/field_definitions", auth,
+                                  {"per_page": 100}).get("data", [])
+                  if not f["attributes"].get("deleted_at")]
+
+        def sort_key(f):
+            name = f["attributes"].get("name", "")
+            parsed = _parse_item_name(name)
+            if not parsed:
+                return (2, 0, name.lower())          # data fields last
+            step, label = parsed
+            pos = rank.get(step.strip().lower())
+            if pos is None:
+                return (1, 0, name.lower())          # names a step that is gone
+            return (0, pos, label.lower())
+
+        wanted = sorted(fields, key=sort_key)
+        for i, f in enumerate(wanted):
+            name = f["attributes"].get("name", "")
+            was = f["attributes"].get("sequence")
+            if was == i:
+                continue
+            _emit(f"  {name:<40} sequence {was} -> {i}")
+            changed += 1
+            if not apply:
+                continue
+            try:
+                requests.patch(
+                    f"{PCP_API_BASE}/tabs/{tab}/field_definitions/{f['id']}",
+                    json={"data": {"type": "FieldDefinition", "id": f["id"],
+                                   "attributes": {"sequence": i}}},
+                    auth=auth, headers=HEADERS, timeout=15,
+                ).raise_for_status()
+            except requests.RequestException as e:
+                _emit(f"    ERROR: could not set sequence on {name!r}: {e}")
+
+    if not changed:
+        _emit("\nAlready in step order — nothing to do.")
+    elif not apply:
+        _emit(f"\n{changed} field(s) would move. Re-run with --i-mean-it to apply.")
+    else:
+        _emit(f"\n{changed} field(s) reordered.")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("probe", nargs="?", default="validate",
-                        choices=["validate", "tabs", "activities", "go-back", "send-email"],
+                        choices=["validate", "reorder", "tabs",
+                                 "activities", "go-back", "send-email"],
                         help="defaults to 'validate'")
     parser.add_argument("--workflow", help="workflow id (not needed for 'tabs')")
     parser.add_argument("--card", help="DISPOSABLE test card id (not needed for 'tabs')")
@@ -608,7 +722,8 @@ def main() -> int:
     parser.add_argument("--no-popup", action="store_true",
                         help="skip the results dialog — for scripted or scheduled runs")
     parser.add_argument("--i-mean-it", action="store_true",
-                        help="required for go-back and send-email, which mutate or send")
+                        help="required for go-back and send-email, which mutate or send; "
+                             "for 'reorder', applies the change instead of a dry run")
     args = parser.parse_args()
 
     if not _project_id:
@@ -632,6 +747,9 @@ def main() -> int:
         probe_tabs(auth, args.tab)
     elif args.probe == "validate":
         problems, _ = validate_rules(auth)
+    elif args.probe == "reorder":
+        _lines.clear()
+        reorder_items_tab(auth, apply=args.i_mean_it)
     elif args.probe == "activities":
         probe_activities(auth, args.workflow, args.card)
     elif args.probe == "go-back":
