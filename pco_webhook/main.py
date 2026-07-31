@@ -1140,6 +1140,46 @@ def _step_name(workflow_id: str, step_id: str, auth) -> str:
                  if s["id"] == str(step_id)), "")
 
 
+def orphaned_items(cfg: dict, workflow_id: str, auth) -> list[dict]:
+    """Items naming a step this workflow does not have.
+
+    A gate matches its step by NAME, so renaming either the step or the field
+    breaks the link — and it breaks OPEN: the step stops gating and cards walk
+    past without the item. Nothing in PCP objects to it, and there is no webhook
+    event for a field-definition rename, so the only way to notice server-side is
+    to spot the orphan.
+
+    Steps and field definitions are both cached per process, so calling this on
+    every gate evaluation costs nothing after the first.
+    """
+    names = {s["name"].strip().lower() for s in _workflow_steps(workflow_id, auth)}
+    return [i for i in _gate_items(cfg, auth)
+            if i.get("step_name") and i["step_name"].strip().lower() not in names]
+
+
+def log_orphaned_items(workflow_id: str, auth, where: str = "") -> list[dict]:
+    """Log any orphaned item as an ERROR. Returns them, for callers that care."""
+    cfg = config.anytime_workflow(workflow_id)
+    if not cfg:
+        return []
+    try:
+        orphans = orphaned_items(cfg, workflow_id, auth)
+    except requests.RequestException as e:
+        logger.warning(f"could not check for orphaned anytime items in {workflow_id}: {e}")
+        return []
+    if orphans:
+        steps = [s["name"] for s in _workflow_steps(workflow_id, auth)]
+        for i in orphans:
+            logger.error(
+                f"ORPHANED ANYTIME ITEM{' (' + where + ')' if where else ''}: "
+                f"field {i['name']!r} ({i['id']}) names step {i['step_name']!r}, which does "
+                f"not exist in workflow {workflow_id}. That step is NOT gating, so cards pass "
+                f"it without this item. Steps that do exist: {steps}. "
+                f"Rename the field or the step so they match."
+            )
+    return orphans
+
+
 def items_gating_step(cfg: dict, workflow_id: str, step_name: str, auth) -> list[dict]:
     """The items that hold a card at `step_name`, or [] if that step is not a gate.
 
@@ -1442,6 +1482,11 @@ def evaluate_gate(person_id: str, workflow_id: str, card_id: str, current_step_i
         return "no-gate-config"
 
     auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+    # Before deciding, say so if any item names a step that no longer exists.
+    # "not-on-gate" below looks identical whether a step is genuinely ungated or
+    # whether a rename silently orphaned its item, so this is what tells them
+    # apart in the logs.
+    log_orphaned_items(workflow_id, auth, where="evaluate_gate")
     step_name = _step_name(workflow_id, current_step_id, auth)
     gating = items_gating_step(cfg, workflow_id, step_name, auth)
     if not gating:
@@ -1865,10 +1910,33 @@ def _handle_webhook_post():
     global _payloads
     _payloads = ([{"event": event_name, "payload": payload}] + _payloads)[:_MAX_PAYLOADS]
 
+    # ── A step changed: re-check that every item still names a real step ──────
+    # Renaming a step breaks its gate OPEN — the step stops matching and cards
+    # walk past without the item. Nothing else notices, so this is the alarm.
+    #
+    # The cache must be cleared first: _steps_cache holds names per process, so a
+    # warm instance would keep matching the OLD name and see no orphan at all.
+    #
+    # Every configured workflow is checked rather than digging the id out of the
+    # payload — WorkflowStep is not a shape event.workflow_id parses, there are
+    # only a handful of rules, and steps are re-cached on the first lookup.
+    if event_name == "people.v2.events.workflow_step.updated":
+        _steps_cache.clear()
+        try:
+            auth = (get_secret("PCP_APP_ID"), get_secret("PCP_SECRET"))
+            orphans = sum(len(log_orphaned_items(str(w.get("workflow_id", "")), auth,
+                                                 where="workflow_step.updated"))
+                          for w in config.ANYTIME_ITEM_WORKFLOWS)
+        except Exception as e:                       # never fail a webhook over a check
+            logger.warning(f"orphan check after workflow_step.updated failed: {e}")
+            orphans = 0
+        logger.info(f"workflow_step.updated — step cache cleared, {orphans} orphaned item(s)")
+        return jsonify({"status": "checked", "event": event_name,
+                        "orphaned_items": orphans}), 200
+
     # ── Early-exit for events that never require action ───────────────────────
     _IGNORE_EVENTS = {
         "people.v2.events.person.destroyed",
-        "people.v2.events.workflow_step.updated",
     }
     if event_name in _IGNORE_EVENTS:
         logger.info(f"Ignored event (no action needed): {event_name}")

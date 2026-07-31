@@ -138,6 +138,26 @@ class TestWebhookRoute:
                 "type": "EventDelivery",
                 "id": "test-ignored",
                 "attributes": {
+                    "name": "people.v2.events.person.destroyed",
+                    "attempt": 1,
+                    "payload": json.dumps({"data": {"type": "Person", "id": "999"}}),
+                },
+                "relationships": {"organization": {"data": {"type": "Organization", "id": "526881"}}},
+            }]
+        }
+        resp = flask_client.post("/webhook", json=payload)
+        print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
+        assert resp.status_code == 200
+        assert resp.get_json()["status"] == "ignored"
+
+    def test_step_updated_checks_for_orphans(self, flask_client):
+        """workflow_step.updated used to be discarded. It is now the alarm for a
+        renamed step, which otherwise un-gates a step silently."""
+        payload = {
+            "data": [{
+                "type": "EventDelivery",
+                "id": "test-step-updated",
+                "attributes": {
                     "name": "people.v2.events.workflow_step.updated",
                     "attempt": 1,
                     "payload": json.dumps({"data": {"type": "WorkflowStep", "id": "999"}}),
@@ -148,7 +168,8 @@ class TestWebhookRoute:
         resp = flask_client.post("/webhook", json=payload)
         print(f"\nstatus={resp.status_code}  body={resp.get_json()}")
         assert resp.status_code == 200
-        assert resp.get_json()["status"] == "ignored"
+        assert resp.get_json()["status"] == "checked"
+        assert "orphaned_items" in resp.get_json()
 
     def test_missing_person_id(self, flask_client):
         payload = {"name": "person.created", "payload": {}}

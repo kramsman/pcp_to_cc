@@ -49,7 +49,7 @@ _UTILS_ROOT = Path("/Users/Denise/Library/CloudStorage/Dropbox/PythonPrograms/uv
 if str(_UTILS_ROOT) not in sys.path:
     sys.path.insert(0, str(_UTILS_ROOT))
 
-from uvbekutils.pyautobek import confirm
+from uvbekutils.pyautobek import confirm, confirm_with_file_link
 
 ROOT_PATH = Path(__file__).parent
 
@@ -177,8 +177,44 @@ def _run_detached(info: dict) -> None:
                 time.sleep(0.1)
 
 
+def _warn_if_anytime_rules_broken() -> None:
+    """Check the anytime rules against live PCP, and speak up only if broken.
+
+    An anytime item names its gating step by NAME, so renaming a step or a field
+    in PCP silently stops that step gating — cards then walk past without the
+    item, and rules.json is byte-identical, so nothing else notices. The check
+    already existed; what was missing was anything running it unprompted.
+
+    Silent on a clean run. A dialog that appears every time is one people learn
+    to dismiss, which would defeat the point.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from wf_anytimeitems_validate import (OUTFILE, problems_only, render_html,
+                                              validate_rules)
+        problems, lines = validate_rules()
+    except BaseException as e:              # never block the menu over a check
+        print(f"Warning: could not check anytime rules ({e})")
+        return
+    if not problems:
+        return
+    for line in problems_only(lines):
+        print(f"anytime rules: {line}")
+    # validate_rules() only gathers lines; the report is written by the
+    # validator's own main(). Write it here too, or the link below would open
+    # whatever the last manual run left behind.
+    OUTFILE.write_text(render_html(lines, problems), encoding="utf-8")
+    confirm_with_file_link(
+        f"{problems} problem{'s' if problems != 1 else ''} found in the Anytime WF "
+        f"Items setup — cards may be passing a step without its items.\n"
+        f"Click the link below for details.",
+        str(OUTFILE), title="Chk 'WF Anytime-Items'", buttons=["OK"],
+    )
+
+
 def main() -> None:
     _ensure_adc_auth()
+    _warn_if_anytime_rules_broken()
     msg = "\n".join(f"{name}\n{info['description']}\n" for name, info in TOOLS.items())
     buttons = list(TOOLS.keys()) + ["Cancel"]
 

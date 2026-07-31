@@ -663,9 +663,6 @@ class RuleEditor(QWidget):
         with open(RULES_FILE) as f:
             data = json.load(f)
         self.rules = {tab["key"]: list(data[tab["key"]]) for tab in TABS}
-        # Snapshot so save can tell whether the anytime rules actually changed —
-        # validating hits the PCP API several times and is only worth it then.
-        self._anytime_on_open = json.dumps(data.get(ANYTIME_KEY, []), sort_keys=True)
         self._saved_state = self._state()
         layout = QVBoxLayout(self)
         nb = QTabWidget()
@@ -736,16 +733,17 @@ class RuleEditor(QWidget):
     def _validate_anytime_rules(self) -> None:
         """After saving a changed anytime rule, check it against live PCP.
 
-        Runs only when the anytime section actually changed, and only reports
-        problems — a clean run says nothing, so this never adds friction to the
-        common case. It cannot block or undo the save: the rules are already
-        written, and a mid-edit state the user means to come back to is their
-        business. Failure to reach PCP is silent for the same reason.
+        Runs on every save, not only when the anytime section changed. Most
+        breakage does not originate here at all: an item names its gating step by
+        NAME, so renaming a step or a field in PCP silently un-gates it while
+        rules.json stays byte-identical. Keying this off a rule change meant the
+        one check that catches that never ran.
+
+        Only problems are reported — a clean run says nothing, so this never adds
+        friction to the common case. It cannot block or undo the save: the rules
+        are already written, and a mid-edit state the user means to come back to
+        is their business. Failure to reach PCP is silent for the same reason.
         """
-        current = json.dumps(self.rules.get(ANYTIME_KEY, []), sort_keys=True)
-        if current == self._anytime_on_open:
-            return
-        self._anytime_on_open = current
         try:
             sys.path.insert(0, str(Path(__file__).parent))
             from wf_anytimeitems_validate import problems_only, validate_rules
