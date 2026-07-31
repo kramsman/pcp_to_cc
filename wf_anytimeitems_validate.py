@@ -338,6 +338,16 @@ def _parse_item_name(field_name: str):
         return (step.strip(), label.strip()) if step.strip() and label.strip() else None
 
 
+def _item_separator() -> str:
+    """The org-wide item separator, from pco_webhook/config.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "pco_webhook"))
+        from pco_webhook import config
+        return config.ITEM_SEPARATOR
+    except Exception:
+        return "!"
+
+
 def validate_rules(auth: tuple | None = None) -> tuple[int, list[str]]:
     """Check every anytime_item_workflows rule against live PCP. Read-only.
 
@@ -714,11 +724,18 @@ def _pick(prompt: str, rows: list[tuple[str, str]]) -> str | None:
 
 
 def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
-    """Re-point items whose named step no longer exists, asking which step each means.
+    """Offer to re-point any dropdown on an items tab that is not gating a step.
 
-    Renaming a step breaks its gate OPEN — the step stops matching and cards walk
-    past without the item. The webhook logs it and the validator errors, but the
-    fix was still manual.
+    Two ways that happens, both breaking the gate OPEN — the step stops holding
+    cards and they walk past without the item:
+
+      * the item names a step that no longer exists, because either the step or
+        the field was renamed. The webhook logs this and the validator errors.
+      * the field has no separator at all, so it is not an item. Renaming
+        'Bio Received?!Raw Bio' to just 'Raw Bio' silently de-gates it, and
+        nothing can object: a dropdown with no separator is exactly what an
+        ordinary data field looks like. Only a human knows which it was, so these
+        are offered, never assumed.
 
     Deliberately interactive rather than automatic. `workflow_step.updated` gives
     the step's NEW name but not its old one, so a webhook could only guess the
@@ -728,7 +745,7 @@ def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
     because the names then match and nothing reports it again.
     """
     _emit("=" * 78)
-    _emit("Repair items naming a step that no longer exists"
+    _emit("Repair dropdowns that are not gating any step"
           + ("" if apply else "  (DRY RUN)"))
     _emit("=" * 78)
 
@@ -744,30 +761,44 @@ def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
                        key=lambda x: x["attributes"].get("sequence", 0))
         live = {s["attributes"].get("name", "").strip().lower() for s in steps}
 
-        orphans = []
+        # Two ways a dropdown on this tab can fail to gate:
+        #   orphan   — names a step that no longer exists (a step or field rename)
+        #   ungated  — has no '!' at all, so it is not an item. Either it is
+        #              ordinary data, or it was an item whose prefix got dropped.
+        #              Nothing in the current state can tell those apart, which is
+        #              why they are offered rather than reported as errors.
+        orphans, ungated = [], []
         for f in _get(f"tabs/{tab}/field_definitions", auth, {"per_page": 100}).get("data", []):
             a = f["attributes"]
             if a.get("deleted_at") or a.get("data_type") != "select":
-                continue
-            parsed = _parse_item_name(a.get("name", ""))
-            if parsed and parsed[0].strip().lower() not in live:
-                orphans.append((f["id"], a.get("name", ""), parsed[0], parsed[1]))
+                continue        # only a dropdown can ever be an item
+            name = a.get("name", "")
+            parsed = _parse_item_name(name)
+            if not parsed:
+                ungated.append((f["id"], name))
+            elif parsed[0].strip().lower() not in live:
+                orphans.append((f["id"], name, parsed[0], parsed[1]))
 
-        if not orphans:
-            _emit("  No orphaned items — every item names a step that exists.")
+        if not orphans and not ungated:
+            _emit("  Nothing to repair — every dropdown here gates a step that exists.")
             continue
 
         for fid, full, step, label in orphans:
             _emit(f"  ORPHAN {full!r} ({fid}) — step {step!r} no longer exists")
-            if not apply:
-                continue
-            rows = [(s["attributes"].get("name", ""), s["attributes"].get("name", ""))
-                    for s in steps]
+        for fid, full in ungated:
+            _emit(f"  NOT AN ITEM {full!r} ({fid}) — no '!', so it gates nothing. "
+                  f"Ordinary data, or an item that lost its step prefix.")
+        if not apply:
+            continue
+
+        rows = [(s["attributes"].get("name", ""), s["attributes"].get("name", ""))
+                for s in steps]
+        for fid, full, step, label in orphans + [(i, n, "", n) for i, n in ungated]:
             chosen = _pick(f"Which step should {label!r} gate?", rows)
             if not chosen:
-                _emit("    skipped")
+                _emit(f"    {full!r} left alone")
                 continue
-            new_name = f"{chosen}{'!'}{label}"
+            new_name = f"{chosen}{_item_separator()}{label}"
             try:
                 requests.patch(
                     f"{PCP_API_BASE}/tabs/{tab}/field_definitions/{fid}",
