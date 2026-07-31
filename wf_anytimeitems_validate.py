@@ -752,8 +752,8 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             # match what staff see on the profile when hunting for the field.
             lines = [
                 _MANIFEST_MARKER,
-                "Fields on this workflow's anytime-items tab are named 'Step!Item'. A step",
-                "is held until that step's items are either 'Yes' or 'Not Needed'.",
+                "Fields on this workflow's anytime-items tab are named 'Step!Item'. "
+                "A step is held until that step's items are either 'Yes' or 'Not Needed'.",
                 "",
             ]
             # Quoted, matching the card notes — a field name sitting bare in prose
