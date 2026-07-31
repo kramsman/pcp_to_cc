@@ -88,6 +88,12 @@
       "form_id": "1197074",
       "complete_workflow_id": "725397",
       "add_to_workflow_id": "731975"
+    },
+    {
+      "description": "Tell us about yourself (1197074) submitted",
+      "form_id": "1197074",
+      "add_to_workflow_id": "731975",
+      "complete_workflow_id": "754034"
     }
   ],
   "pcp_workflow_rules": [

@@ -8,6 +8,13 @@ nothing in the PCO UI or the webhook logs to say why. Run this after any change
 to an anytime rule, to a dropdown's options, or to a workflow's steps.
 
     validate    (default) check every configured rule.  READ-ONLY.
+    reorder     sequence each items tab to match its workflow's step order.
+    describe    write the item manifest into every step's description.
+    repair      re-point items whose named step no longer exists, asking which
+                step each one means. This is the fix for a renamed step, which
+                otherwise un-gates that step silently.
+
+All three write only with --i-mean-it; without it they show what they would do.
 
 Also carries the one-off API probes used to design the feature. They need a
 DISPOSABLE test card, and the last two change it:
@@ -692,6 +699,95 @@ def reorder_items_tab(auth: tuple, apply: bool = False) -> int:
     return 0
 
 
+def _pick(prompt: str, rows: list[tuple[str, str]]) -> str | None:
+    """Numbered picker, same shape as pco_clone_fields.pick(). None to skip."""
+    print(f"\n{prompt}")
+    for i, (_, label) in enumerate(rows, 1):
+        print(f"  {i:>3}. {label}")
+    while True:
+        raw = input("Number (Enter to skip): ").strip()
+        if not raw:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(rows):
+            return rows[int(raw) - 1][0]
+        print("  Not a number on the list.")
+
+
+def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
+    """Re-point items whose named step no longer exists, asking which step each means.
+
+    Renaming a step breaks its gate OPEN — the step stops matching and cards walk
+    past without the item. The webhook logs it and the validator errors, but the
+    fix was still manual.
+
+    Deliberately interactive rather than automatic. `workflow_step.updated` gives
+    the step's NEW name but not its old one, so a webhook could only guess the
+    pairing — and `describe --i-mean-it` writes descriptions, firing that same
+    event five times, which would let a stale orphan be silently re-pointed at
+    whichever step was being described. A wrong guess is worse than an error,
+    because the names then match and nothing reports it again.
+    """
+    _emit("=" * 78)
+    _emit("Repair items naming a step that no longer exists"
+          + ("" if apply else "  (DRY RUN)"))
+    _emit("=" * 78)
+
+    rules = json.loads((Path(__file__).parent / "rules.json").read_text()) \
+        .get("anytime_item_workflows", [])
+    fixed = 0
+
+    for rule in rules:
+        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+        _emit(f"\n--- {rule.get('description', '(no description)')} ---")
+
+        steps = sorted(_get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", []),
+                       key=lambda x: x["attributes"].get("sequence", 0))
+        live = {s["attributes"].get("name", "").strip().lower() for s in steps}
+
+        orphans = []
+        for f in _get(f"tabs/{tab}/field_definitions", auth, {"per_page": 100}).get("data", []):
+            a = f["attributes"]
+            if a.get("deleted_at") or a.get("data_type") != "select":
+                continue
+            parsed = _parse_item_name(a.get("name", ""))
+            if parsed and parsed[0].strip().lower() not in live:
+                orphans.append((f["id"], a.get("name", ""), parsed[0], parsed[1]))
+
+        if not orphans:
+            _emit("  No orphaned items — every item names a step that exists.")
+            continue
+
+        for fid, full, step, label in orphans:
+            _emit(f"  ORPHAN {full!r} ({fid}) — step {step!r} no longer exists")
+            if not apply:
+                continue
+            rows = [(s["attributes"].get("name", ""), s["attributes"].get("name", ""))
+                    for s in steps]
+            chosen = _pick(f"Which step should {label!r} gate?", rows)
+            if not chosen:
+                _emit("    skipped")
+                continue
+            new_name = f"{chosen}{'!'}{label}"
+            try:
+                requests.patch(
+                    f"{PCP_API_BASE}/tabs/{tab}/field_definitions/{fid}",
+                    json={"data": {"type": "FieldDefinition", "id": fid,
+                                   "attributes": {"name": new_name}}},
+                    auth=auth, headers=HEADERS, timeout=15,
+                ).raise_for_status()
+                _emit(f"    renamed to {new_name!r}")
+                fixed += 1
+            except requests.RequestException as e:
+                _emit(f"    ERROR: could not rename {full!r}: {e}")
+
+    if not apply:
+        _emit("\nRe-run with --i-mean-it to choose a step for each and rename.")
+    elif fixed:
+        _emit(f"\n{fixed} item(s) renamed. Re-run 'describe --i-mean-it' to refresh "
+              f"the step manifests.")
+    return 0
+
+
 _MANIFEST_MARKER = "--- anytime items (managed automatically) ---"
 
 
@@ -806,7 +902,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("probe", nargs="?", default="validate",
-                        choices=["validate", "reorder", "describe", "tabs",
+                        choices=["validate", "reorder", "describe", "repair", "tabs",
                                  "activities", "go-back", "send-email"],
                         help="defaults to 'validate'")
     parser.add_argument("--workflow", help="workflow id (not needed for 'tabs')")
@@ -816,8 +912,8 @@ def main() -> int:
                         help="skip the results dialog — for scripted or scheduled runs")
     parser.add_argument("--i-mean-it", action="store_true",
                         help="required for go-back and send-email, which mutate or send; "
-                             "for 'reorder' and 'describe', applies the change "
-                             "instead of a dry run")
+                             "for 'reorder', 'describe' and 'repair', applies the "
+                             "change instead of a dry run")
     args = parser.parse_args()
 
     if not _project_id:
@@ -847,6 +943,9 @@ def main() -> int:
     elif args.probe == "describe":
         _lines.clear()
         describe_steps(auth, apply=args.i_mean_it)
+    elif args.probe == "repair":
+        _lines.clear()
+        repair_orphaned_items(auth, apply=args.i_mean_it)
     elif args.probe == "activities":
         probe_activities(auth, args.workflow, args.card)
     elif args.probe == "go-back":

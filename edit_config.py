@@ -800,7 +800,7 @@ class RuleEditor(QWidget):
         """Write all rule tables to rules_report.html and open it in the browser."""
         parts = [
             "<!DOCTYPE html><html><head><meta charset='utf-8'>",
-            "<title>PCP → CC Automation Rules</title>",
+            "<title>PCO Automation Rules</title>",
             "<style>",
             "body{font-family:-apple-system,Helvetica,Arial,sans-serif;margin:32px;color:#222;}",
             "h1{font-size:20px;} h2{font-size:15px;margin-top:28px;}",
