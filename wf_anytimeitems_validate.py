@@ -752,17 +752,19 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             # match what staff see on the profile when hunting for the field.
             lines = [
                 _MANIFEST_MARKER,
-                "Fields on this workflow's items tab, named 'Step!Item'. A card cannot",
-                "leave a step until that step's items are 'Yes' or 'Not Needed'.",
+                "Fields on this workflow's anytime-items tab are named 'Step!Item'. A step",
+                "is held until that step's items are either 'Yes' or 'Not Needed'.",
                 "",
             ]
+            # Quoted, matching the card notes — a field name sitting bare in prose
+            # is hard to pick out, especially one containing a space and a '!'.
             if mine:
-                lines.append("HELD AT THIS STEP until done:")
-                lines += [f"- {n}" for n in mine]
+                lines.append("STEP HELD BY:")
+                lines += [f"- {n!r}" for n in mine]
             else:
                 lines.append("Nothing is held at this step.")
             if other:
-                lines += ["", "Elsewhere in this workflow:"] + [f"- {n}" for n in other]
+                lines += ["", "Elsewhere in this workflow:"] + [f"- {n!r}" for n in other]
             block = "\n".join(lines)
 
             existing = s["attributes"].get("description") or ""
