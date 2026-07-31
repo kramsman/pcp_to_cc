@@ -1,6 +1,5 @@
 """GUI editor for PCP → CC automation rules. Reads/writes rules.json."""
 
-
 import html
 import json
 import sys

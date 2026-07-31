@@ -829,15 +829,19 @@ def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
     if not apply:
         _emit("\nRe-run with --i-mean-it to choose a step for each and rename.")
     elif fixed:
-        _emit(f"\n{fixed} item(s) renamed. Re-run 'describe --i-mean-it' to refresh "
-              f"the step manifests.")
-    return 0
+        # Every step's manifest lists all of the workflow's items, so one rename
+        # makes all of them stale. Refreshing here rather than telling the user to
+        # run another command — a reminder is just a step to forget.
+        _emit(f"\n{fixed} item(s) renamed. Refreshing step descriptions...")
+        describe_steps(auth, apply=True, quiet=True)
+        _emit("Step descriptions updated.")
+    return fixed
 
 
 _MANIFEST_MARKER = "--- anytime items (managed automatically) ---"
 
 
-def describe_steps(auth: tuple, apply: bool = False) -> int:
+def describe_steps(auth: tuple, apply: bool = False, quiet: bool = False) -> int:
     """Write each workflow's anytime-item manifest into every step's description.
 
     With gates spread across several steps, no single step shows the whole
@@ -850,10 +854,11 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
 
     Read-only unless `apply`.
     """
-    _emit("=" * 78)
-    _emit("Write anytime-item manifest into step descriptions"
-          + ("" if apply else "  (DRY RUN)"))
-    _emit("=" * 78)
+    if not quiet:
+        _emit("=" * 78)
+        _emit("Write anytime-item manifest into step descriptions"
+              + ("" if apply else "  (DRY RUN)"))
+        _emit("=" * 78)
 
     rules = json.loads((Path(__file__).parent / "rules.json").read_text()) \
         .get("anytime_item_workflows", [])
@@ -861,7 +866,8 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
 
     for rule in rules:
         wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
-        _emit(f"\n--- {rule.get('description', '(no description)')} ---")
+        if not quiet:
+            _emit(f"\n--- {rule.get('description', '(no description)')} ---")
 
         steps = sorted(_get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", []),
                        key=lambda x: x["attributes"].get("sequence", 0))
@@ -874,7 +880,8 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             if parsed:
                 items.append((parsed[0], a.get("name", "")))
         if not items:
-            _emit("  no items on this tab — nothing to describe")
+            if not quiet:
+                _emit("  no items on this tab — nothing to describe")
             continue
 
         for s in steps:
@@ -916,11 +923,13 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             kept = existing.split(_MANIFEST_MARKER)[0].rstrip()
             wanted = f"{kept}\n\n{block}" if kept else block
             if existing.strip() == wanted.strip():
-                _emit(f"  {name!r}: already current")
+                if not quiet:
+                    _emit(f"  {name!r}: already current")
                 continue
 
-            _emit(f"  {name!r}: {'gates ' + ', '.join(mine) if mine else 'no gate'}"
-                  + ("  [preserving existing text]" if kept else ""))
+            if not quiet:
+                _emit(f"  {name!r}: {'gates ' + ', '.join(mine) if mine else 'no gate'}"
+                      + ("  [preserving existing text]" if kept else ""))
             changed += 1
             if not apply:
                 continue
@@ -934,14 +943,16 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             except requests.RequestException as e:
                 _emit(f"    ERROR: could not set description on {name!r}: {e}")
 
-    if not changed:
+    if quiet:
+        pass                       # counting only — see _offer_repair()
+    elif not changed:
         _emit("\nAll step descriptions already current.")
     elif not apply:
         _emit(f"\n{changed} step description(s) would change. "
               f"Re-run with --i-mean-it to apply.")
     else:
         _emit(f"\n{changed} step description(s) written.")
-    return 0
+    return changed
 
 
 def _offer_repair(auth: tuple) -> int:
@@ -962,21 +973,33 @@ def _offer_repair(auth: tuple) -> int:
     """
     try:
         orphans = sum(len(f["orphans"]) for f in scan_unattached(auth))
+        # Stale descriptions are checked too: renaming a step that gates nothing
+        # orphans no item, but every step's manifest lists all of the workflow's
+        # items, so the notes still go out of date.
+        stale = describe_steps(auth, apply=False, quiet=True)
     except Exception as e:
         print(f"  (could not check for repairable items: {e})")
         return 0
-    if not orphans:
+    if not orphans and not stale:
         return 0
-    print(f"\n{orphans} item(s) name a step that no longer exists, so those steps "
-          f"are not gating.")
+
+    if orphans:
+        print(f"\n{orphans} item(s) name a step that no longer exists, so those "
+              f"steps are not gating.")
+    if stale:
+        print(f"{stale} step description(s) are out of date.")
     try:
-        answer = input("Fix them now? [y/N]: ").strip().lower()
+        answer = input("Fix now? [y/N]: ").strip().lower()
     except EOFError:               # piped or non-interactive: leave it alone
         return 0
     if not answer.startswith("y"):
         print("Left unchanged. Run 'repair --i-mean-it' when you want to fix them.")
         return 0
-    repair_orphaned_items(auth, apply=True)
+
+    if orphans:
+        repair_orphaned_items(auth, apply=True)     # refreshes descriptions itself
+    else:
+        describe_steps(auth, apply=True)
     return orphans
 
 
