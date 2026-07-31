@@ -737,13 +737,32 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
 
         for s in steps:
             name = s["attributes"].get("name", "")
-            mine = [n for st, n in items if st.strip().lower() == name.strip().lower()]
-            lines = [_MANIFEST_MARKER]
-            lines.append("Items marked >> hold a card at THIS step until they are done."
-                         if mine else "No item holds a card at this step.")
-            for st, n in items:
-                mark = ">>" if st.strip().lower() == name.strip().lower() else "  "
-                lines.append(f"{mark} {n}")
+            key = name.strip().lower()
+            mine = [n for st, n in items if st.strip().lower() == key]
+            other = [n for st, n in items if st.strip().lower() != key]
+
+            # Headings, not a ">>" marker against indented lines: PCP renders the
+            # newlines in a description but STRIPS leading whitespace, so the
+            # indent the marker stood out against collapses and every item looks
+            # alike. A heading survives that.
+            #
+            # The preamble is not padding — "Edit bio!Raw Bio" means nothing to
+            # someone who has not had the convention explained, and a step
+            # description is where they meet it first. Names are literal so they
+            # match what staff see on the profile when hunting for the field.
+            lines = [
+                _MANIFEST_MARKER,
+                "Fields on this workflow's items tab, named 'Step!Item'. A card cannot",
+                "leave a step until that step's items are 'Yes' or 'Not Needed'.",
+                "",
+            ]
+            if mine:
+                lines.append("HELD AT THIS STEP until done:")
+                lines += [f"- {n}" for n in mine]
+            else:
+                lines.append("Nothing is held at this step.")
+            if other:
+                lines += ["", "Elsewhere in this workflow:"] + [f"- {n}" for n in other]
             block = "\n".join(lines)
 
             existing = s["attributes"].get("description") or ""
