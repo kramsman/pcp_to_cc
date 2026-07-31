@@ -752,7 +752,10 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
             # match what staff see on the profile when hunting for the field.
             lines = [
                 _MANIFEST_MARKER,
-                "Fields on this workflow's anytime-items tab are named 'Step!Item'. "
+                # One list entry per rendered line. Adjacent string literals with no
+                # comma between them are concatenated by Python into a single line,
+                # which looks like a line break in the source but is not one in PCP.
+                "Fields on this workflow's anytime-items tab are named 'Step!Item'.",
                 "A step is held until that step's items are either 'Yes' or 'Not Needed'.",
                 "",
             ]
