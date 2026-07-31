@@ -709,6 +709,44 @@ def reorder_items_tab(auth: tuple, apply: bool = False) -> int:
     return 0
 
 
+def scan_unattached(auth: tuple) -> list[dict]:
+    """Per rule, the dropdowns on its items tab that are not gating any step.
+
+    Returns [{rule, tab, steps, orphans, ungated}], where
+
+        orphans  (id, full_name, named_step, label) — names a step that does not
+                 exist, because either the step or the field was renamed
+        ungated  (id, full_name) — no separator, so not an item at all. Either
+                 ordinary data, or an item whose 'Step!' prefix was dropped.
+
+    Shared by the repair itself and by the offer made after a failed check, so
+    the two cannot disagree about what is broken. Read-only.
+    """
+    rules = json.loads((Path(__file__).parent / "rules.json").read_text()) \
+        .get("anytime_item_workflows", [])
+    out = []
+    for rule in rules:
+        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+        steps = sorted(_get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", []),
+                       key=lambda x: x["attributes"].get("sequence", 0))
+        live = {s["attributes"].get("name", "").strip().lower() for s in steps}
+
+        orphans, ungated = [], []
+        for f in _get(f"tabs/{tab}/field_definitions", auth, {"per_page": 100}).get("data", []):
+            a = f["attributes"]
+            if a.get("deleted_at") or a.get("data_type") != "select":
+                continue        # only a dropdown can ever be an item
+            name = a.get("name", "")
+            parsed = _parse_item_name(name)
+            if not parsed:
+                ungated.append((f["id"], name))
+            elif parsed[0].strip().lower() not in live:
+                orphans.append((f["id"], name, parsed[0], parsed[1]))
+        out.append({"rule": rule, "tab": tab, "steps": steps,
+                    "orphans": orphans, "ungated": ungated})
+    return out
+
+
 def _pick(prompt: str, rows: list[tuple[str, str]]) -> str | None:
     """Numbered picker, same shape as pco_clone_fields.pick(). None to skip."""
     print(f"\n{prompt}")
@@ -749,35 +787,12 @@ def repair_orphaned_items(auth: tuple, apply: bool = False) -> int:
           + ("" if apply else "  (DRY RUN)"))
     _emit("=" * 78)
 
-    rules = json.loads((Path(__file__).parent / "rules.json").read_text()) \
-        .get("anytime_item_workflows", [])
     fixed = 0
 
-    for rule in rules:
-        wf, tab = str(rule.get("workflow_id", "")), str(rule.get("field_tab_id", ""))
+    for found in scan_unattached(auth):
+        rule, tab = found["rule"], found["tab"]
+        steps, orphans, ungated = found["steps"], found["orphans"], found["ungated"]
         _emit(f"\n--- {rule.get('description', '(no description)')} ---")
-
-        steps = sorted(_get(f"workflows/{wf}/steps", auth, {"per_page": 100}).get("data", []),
-                       key=lambda x: x["attributes"].get("sequence", 0))
-        live = {s["attributes"].get("name", "").strip().lower() for s in steps}
-
-        # Two ways a dropdown on this tab can fail to gate:
-        #   orphan   — names a step that no longer exists (a step or field rename)
-        #   ungated  — has no '!' at all, so it is not an item. Either it is
-        #              ordinary data, or it was an item whose prefix got dropped.
-        #              Nothing in the current state can tell those apart, which is
-        #              why they are offered rather than reported as errors.
-        orphans, ungated = [], []
-        for f in _get(f"tabs/{tab}/field_definitions", auth, {"per_page": 100}).get("data", []):
-            a = f["attributes"]
-            if a.get("deleted_at") or a.get("data_type") != "select":
-                continue        # only a dropdown can ever be an item
-            name = a.get("name", "")
-            parsed = _parse_item_name(name)
-            if not parsed:
-                ungated.append((f["id"], name))
-            elif parsed[0].strip().lower() not in live:
-                orphans.append((f["id"], name, parsed[0], parsed[1]))
 
         if not orphans and not ungated:
             _emit("  Nothing to repair — every dropdown here gates a step that exists.")
@@ -929,6 +944,42 @@ def describe_steps(auth: tuple, apply: bool = False) -> int:
     return 0
 
 
+def _offer_repair(auth: tuple) -> int:
+    """After a failed check, offer to fix it here. Returns the number repaired.
+
+    Deliberately in the CLI path and NOT inside validate_rules(): that is also
+    called in-process by edit_config.py and by the launcher's startup check,
+    both of which run under Qt with no terminal to read from. A prompt there
+    would hang the app.
+
+    Triggered by ORPHANS only. A dropdown with no separator is a NOTE, not an
+    error — it is exactly what an ordinary data field looks like — so prompting
+    about those on every check would become a question people learn to dismiss.
+    They are still listed inside repair itself.
+
+    No sys.stdout.isatty() guard: PyCharm's console reports False, which
+    silently disabled a popup once already.
+    """
+    try:
+        orphans = sum(len(f["orphans"]) for f in scan_unattached(auth))
+    except Exception as e:
+        print(f"  (could not check for repairable items: {e})")
+        return 0
+    if not orphans:
+        return 0
+    print(f"\n{orphans} item(s) name a step that no longer exists, so those steps "
+          f"are not gating.")
+    try:
+        answer = input("Fix them now? [y/N]: ").strip().lower()
+    except EOFError:               # piped or non-interactive: leave it alone
+        return 0
+    if not answer.startswith("y"):
+        print("Left unchanged. Run 'repair --i-mean-it' when you want to fix them.")
+        return 0
+    repair_orphaned_items(auth, apply=True)
+    return orphans
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -968,6 +1019,7 @@ def main() -> int:
         probe_tabs(auth, args.tab)
     elif args.probe == "validate":
         problems, _ = validate_rules(auth)
+        problems -= _offer_repair(auth)
     elif args.probe == "reorder":
         _lines.clear()
         reorder_items_tab(auth, apply=args.i_mean_it)

@@ -21,7 +21,9 @@ Menu items:
     Chk 'WF Anytime-Items'
         Check the Anytime WF Items rules against live PCP. They fail silently
         when wrong, so run after changing a rule, a dropdown's options, or a
-        workflow's steps.
+        workflow's steps. Offers to re-point any item that has stopped gating,
+        after a step rename or a field losing its 'Step!' prefix. This check also
+        runs when the launcher starts, and only speaks up if something is broken.
     Rpt 'WF People'
         Report every active workflow card across all PCP workflows to a CSV
         (workflow, step, person, assignee, snoozed, overdue, last-updated).
@@ -91,10 +93,15 @@ TOOLS = {
     },
     "Chk 'WF Anytime-Items'": {
         "script": ROOT_PATH / "wf_anytimeitems_validate.py",
+        # --no-popup so this is a single terminal conversation: the report, then
+        # the offer to fix anything broken. With the popup as well you would be
+        # reading the result in one place and answering in another.
+        "args": ["--no-popup"],
         "description": (
             "Check the Anytime WF Items rules against live Planning Center.\n"
             "These fail silently when wrong — cards just stop advancing — so run\n"
-            "this after changing a rule, a dropdown's options, or a workflow's steps."
+            "this after changing a rule, a dropdown's options, or a workflow's steps.\n"
+            "If a step or field rename has broken a gate, it offers to fix it."
         ),
         "detach": False,
     },
@@ -207,7 +214,11 @@ def _warn_if_anytime_rules_broken() -> None:
     confirm_with_file_link(
         f"{problems} problem{'s' if problems != 1 else ''} found in the Anytime WF "
         f"Items setup — cards may be passing a step without its items.\n"
-        f"Click the link below for details.",
+        f"\n"
+        f"Pick \"Chk 'WF Anytime-Items'\" from the menu — it shows the detail, and "
+        f"offers to fix it if a step or field rename broke a gate.\n"
+        f"\n"
+        f"Click the link below for the full report.",
         str(OUTFILE), title="Chk 'WF Anytime-Items'", buttons=["OK"],
     )
 
@@ -240,7 +251,10 @@ def main() -> None:
             _run_detached(info)
             return
 
-        subprocess.run([sys.executable, str(info["script"])], check=False)
+        # args lets one script back several menu entries — the anytime validator
+        # is both the checker and, with "repair", the fixer.
+        subprocess.run([sys.executable, str(info["script"]), *info.get("args", [])],
+                       check=False)
         print()  # separate this tool's output from the next menu
 
 
